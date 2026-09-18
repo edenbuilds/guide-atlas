@@ -82,7 +82,8 @@ Firecrawl's `json` format is driven by `PAGE_EXTRACTION_JSON_SCHEMA`, which asks
 - phones/WhatsApp are re-extracted from the markdown with `libphonenumber-js` (`isValid()`), snapped to page-verified numbers by suffix, and `whatsappConfirmed` is only `true` for `wa.me` / `api.whatsapp.com` links or an explicit "WhatsApp" label within a short window of the number;
 - vehicle type, services and client nationalities are re-matched with the multilingual `dictionaries.ts` rules (`requiresContext` rules for labels that are also place names, `NATIONALITY_NOISE` to ignore currency pickers / cuisine / embassies, review text split out so guests' reviews count for client experience but not for services);
 - names are cleaned of role words in 30+ languages incl. CJK (`ドライバーガイド`, `기사`, `司機導遊`), and fall back to page title, URL slug or first heading;
-- `confidence` (0–1) is scored from contact completeness, evidence and independence signals; `fingerprint` (sha1 of whatsapp | phone | email | name+country) is the upsert key.
+- placeholder numbers (`+41 12 345 67 89`, repeated digits) are rejected, and a country the model names outside the 50 markets is never relabelled with the scrape-target hint;
+- `confidence` (0–1) is scored from contact completeness, evidence and independence signals; `fingerprint` (sha1 of the phone number, else e-mail, else name+country+source domain) is the upsert key, so the same number is one row whether or not a page labels it WhatsApp.
 
 `--mode regex` runs the same normaliser without the LLM step (1 credit/page instead of 5) for cheap, wide sweeps.
 
@@ -109,7 +110,7 @@ npm run scrape:workers -- --per-country --country IT,ES,FR --mode regex --print
 
 | Route | Purpose |
 | --- | --- |
-| `POST /api/guides/ingest` | Validates `{ records: GuideRecord[], run? }` with Zod, merges with existing rows by `fingerprint` (never downgrades a confirmed WhatsApp, unions list fields, keeps the higher confidence), upserts in a transaction with per-row fallback so one bad record can't fail a batch. Optional `Authorization: Bearer $INGEST_API_KEY`. |
+| `POST /api/guides/ingest` | Validates `{ guides: GuideRecord[], run? }` record-by-record with Zod (E.164 numbers, `whatsappConfirmed` requires a number, `sourceDomain` must match `sourceUrl`); invalid records are reported by index while valid ones land. Merges with existing rows by `fingerprint` (never downgrades a confirmed WhatsApp, unions list fields, keeps the higher confidence and its name, never moves `scrapedAt` backwards), upserts in chunked transactions with per-row fallback. Optional `Authorization: Bearer $INGEST_API_KEY`. |
 | `GET /api/guides` | Paginated, filterable (`country`, `vehicle`, `client`, `service`, `whatsapp`, `contact`, `independent`, `minConfidence`, `search`, `sort`) |
 | `GET /api/guides/export` | Streams the same filtered set as UTF-8 CSV (BOM for Excel, formula-injection neutralised, E.164 numbers preserved) |
 | `GET /api/guides/runs`, `PATCH` | Recent scrape runs / status updates from the scraper |

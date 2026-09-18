@@ -26,7 +26,9 @@ export function mergeInto(existing: TourGuide | undefined, incoming: GuideRecord
 
   return {
     fingerprint: incoming.fingerprint,
-    fullName: incoming.fullName || existing?.fullName || "Unknown",
+    // Shared office numbers can map several people to one fingerprint; keep the name that came
+    // with the more confident extraction instead of flipping it on every ingest.
+    fullName: !existing || incoming.confidence >= existing.confidence ? incoming.fullName || existing?.fullName || "Unknown" : existing.fullName,
     companyName: pick(incoming.companyName, existing?.companyName),
     email: pick(incoming.email, existing?.email),
     phone: pick(incoming.phone, existing?.phone),
@@ -49,7 +51,7 @@ export function mergeInto(existing: TourGuide | undefined, incoming: GuideRecord
     smallGroupCapable: pick(incoming.smallGroupCapable, existing?.smallGroupCapable),
     isTourManager: pick(incoming.isTourManager, existing?.isTourManager),
     licensed: pick(incoming.licensed, existing?.licensed),
-    yearsExperience: Math.max(incoming.yearsExperience ?? 0, existing?.yearsExperience ?? 0) || null,
+    yearsExperience: maxNullable(incoming.yearsExperience, existing?.yearsExperience),
     bio: incoming.bio && (!existing?.bio || incoming.bio.length > existing.bio.length) ? incoming.bio : (existing?.bio ?? null),
     sourceUrl: incoming.sourceUrl,
     sourceDomain: incoming.sourceDomain,
@@ -57,8 +59,19 @@ export function mergeInto(existing: TourGuide | undefined, incoming: GuideRecord
     confidence: Math.max(incoming.confidence, existing?.confidence ?? 0),
     evidence: Object.keys(evidence).length ? JSON.stringify(evidence) : null,
     rawJson: incoming.rawJson !== undefined ? JSON.stringify(incoming.rawJson) : (existing?.rawJson ?? null),
-    scrapedAt: incoming.scrapedAt ?? new Date(),
+    scrapedAt: latest(incoming.scrapedAt ?? new Date(), existing?.scrapedAt),
   };
+}
+
+function maxNullable(a: number | null | undefined, b: number | null | undefined): number | null {
+  if (a == null) return b ?? null;
+  if (b == null) return a;
+  return Math.max(a, b);
+}
+
+/** Replaying an old JSONL log must not make a row look staler than it is. */
+function latest(a: Date, b: Date | null | undefined): Date {
+  return b && b.getTime() > a.getTime() ? b : a;
 }
 
 /** "Unknown" is the weakest vehicle class; any concrete class beats it. */

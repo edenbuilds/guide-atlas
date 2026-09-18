@@ -62,7 +62,7 @@ model TourGuide {
   evidence     String? // JSON: snippets proving vehicle / client-experience / whatsapp claims
   rawJson      String? // original extractor output for auditing
 
-  // Dedupe key: sha1 of (whatsapp|phone|email|name+country)
+  // Dedupe key: sha1 of the strongest identifier — phone/whatsapp number, else email, else name+country+sourceDomain
   fingerprint String @unique
 
   scrapedAt DateTime @default(now())

@@ -25,7 +25,7 @@ import { Prisma, PrismaClient } from "@prisma/client";
 import { z } from "zod";
 import { GuideRecordSchema, type GuideRecord, type GuideRecordInput } from "../src/lib/guide-schema";
 import { mergeInto } from "../src/lib/guide-merge";
-import { normalizePage, normalizePageRegex } from "../scraper/lib/normalize";
+import { fingerprintFor, normalizePage, normalizePageRegex } from "../scraper/lib/normalize";
 import { countryByCode } from "../scraper/lib/countries";
 import { createFirecrawlClient } from "../scraper/lib/firecrawl";
 import { EXTRACTION_PROMPT, PAGE_EXTRACTION_JSON_SCHEMA } from "../scraper/lib/extract-schema";
@@ -104,6 +104,26 @@ function contractChecks() {
     if (SYSTEM_COLUMNS.has(name)) continue;
     check(name in shape, `column "${name}" is produced by the scraper`, { type: col.type });
   }
+
+  // Semantic guards the structural diff cannot see.
+  const base = { fullName: "Contract Test", country: "Japan", sourceUrl: "https://example.jp/guide", sourceDomain: "example.jp", fingerprint: "0123456789abcdef" };
+  check(!GuideRecordSchema.safeParse({ ...base, phone: "+81 90 3333 4444" }).success, "schema rejects non-E.164 phone");
+  check(GuideRecordSchema.safeParse({ ...base, phone: "+819033334444" }).success, "schema accepts E.164 phone");
+  check(!GuideRecordSchema.safeParse({ ...base, whatsappConfirmed: true }).success, "schema rejects whatsappConfirmed without a number");
+  check(!GuideRecordSchema.safeParse({ ...base, countryCode: "12" }).success, "schema rejects numeric countryCode");
+  check(!GuideRecordSchema.safeParse({ ...base, sourceDomain: "other.example" }).success, "schema rejects sourceDomain that differs from sourceUrl host");
+  check(GuideRecordSchema.safeParse({ ...base, email: " Foo@Example.JP " }).data?.email === "foo@example.jp", "schema trims + lowercases email before validating");
+  check(
+    fingerprintFor({ whatsapp: "+819033334444", name: "A", country: "Japan", sourceDomain: "a.jp" }) === fingerprintFor({ phone: "+819033334444", name: "B", country: "Japan", sourceDomain: "b.jp" }),
+    "same number yields the same fingerprint whether labelled WhatsApp or not",
+  );
+  const merged = mergeInto(
+    { fullName: "Existing Name", confidence: 0.9, scrapedAt: new Date("2026-09-01"), yearsExperience: 0 } as unknown as Parameters<typeof mergeInto>[0],
+    GuideRecordSchema.parse({ ...base, confidence: 0.4, scrapedAt: "2025-01-01T00:00:00Z", yearsExperience: 0 }),
+  );
+  check(merged.fullName === "Existing Name", "merge keeps the more confident name");
+  check(new Date(merged.scrapedAt as Date).getTime() === new Date("2026-09-01").getTime(), "merge never moves scrapedAt backwards");
+  check(merged.yearsExperience === 0, "merge preserves yearsExperience = 0");
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -130,8 +150,8 @@ const FIXTURES: Fixture[] = [
 Ich bin selbstständiger Fahrer-Guide mit eigenem Mercedes V-Klasse (7 Sitzer) und begleite seit 2009 kleine Gruppen, Paare und Familien durch Bayern.
 Ich habe viel Erfahrung mit indischen Gästen und amerikanischen Touristen.
 
-Kontakt: WhatsApp +49 171 2345678 · E-Mail: thomas@muenchen-fahrer-guide.de`,
-    expect: { fullName: "Thomas Müller", whatsapp: "+491712345678", whatsappConfirmed: true, email: "thomas@muenchen-fahrer-guide.de", vehicleType: "Minivan", vehicleCapacity: 7, clientExperience: ["Indian", "American"], isIndependent: true, worksWithCouples: true, countryCode: "DE" },
+Kontakt: WhatsApp +49 171 4827361 · E-Mail: thomas@muenchen-fahrer-guide.de`,
+    expect: { fullName: "Thomas Müller", whatsapp: "+491714827361", whatsappConfirmed: true, email: "thomas@muenchen-fahrer-guide.de", vehicleType: "Minivan", vehicleCapacity: 7, clientExperience: ["Indian", "American"], isIndependent: true, worksWithCouples: true, countryCode: "DE" },
   },
   {
     name: "Japanese driver-guide (ja) with Alphard",
@@ -142,8 +162,8 @@ Kontakt: WhatsApp +49 171 2345678 · E-Mail: thomas@muenchen-fahrer-guide.de`,
 全国通訳案内士の資格を持つフリーランスのドライバーガイドです。トヨタ アルファード（6人乗り）で京都・奈良をご案内します。
 インドからのお客様や中国のお客様の受け入れ経験が豊富です。ご夫婦や少人数のご家族に最適です。
 
-お問い合わせ: WhatsApp 090-1234-5678 / メール sato@kyoto-driverguide.jp`,
-    expect: { fullName: "佐藤健一", whatsapp: "+819012345678", whatsappConfirmed: true, vehicleType: "Minivan", vehicleCapacity: 6, clientExperience: ["Indian", "Chinese"], licensed: true, countryCode: "JP" },
+お問い合わせ: WhatsApp 090-4816-2735 / メール sato@kyoto-driverguide.jp`,
+    expect: { fullName: "佐藤健一", whatsapp: "+819048162735", whatsappConfirmed: true, vehicleType: "Minivan", vehicleCapacity: 6, clientExperience: ["Indian", "Chinese"], licensed: true, countryCode: "JP" },
   },
   {
     name: "Korean guide (ko) with wa.me link and Carnival",
@@ -154,8 +174,8 @@ Kontakt: WhatsApp +49 171 2345678 · E-Mail: thomas@muenchen-fahrer-guide.de`,
 관광통역안내사 자격증 보유. 기사 겸 가이드로 카니발 (9인승) 차량으로 서울, 부산을 안내합니다.
 인도 고객과 미국 관광객 경험 다수. 커플 및 가족 소그룹 환영.
 
-[WhatsApp으로 연락](https://wa.me/821012345678)`,
-    expect: { fullName: "김민수", whatsapp: "+821012345678", whatsappConfirmed: true, vehicleType: "Minivan", vehicleCapacity: 9, clientExperience: ["Indian", "American"], countryCode: "KR" },
+[WhatsApp으로 연락](https://wa.me/821047382915)`,
+    expect: { fullName: "김민수", whatsapp: "+821047382915", whatsappConfirmed: true, vehicleType: "Minivan", vehicleCapacity: 9, clientExperience: ["Indian", "American"], countryCode: "KR" },
   },
   {
     name: "Spanish chófer guía using 'hindúes' for Indian clients",
@@ -166,8 +186,8 @@ Kontakt: WhatsApp +49 171 2345678 · E-Mail: thomas@muenchen-fahrer-guide.de`,
 Guía oficial de turismo y conductor autónomo. Dispongo de un monovolumen Mercedes Vito de 7 plazas.
 Experiencia con turistas hindúes, familias americanas y grupos chinos. Ideal para parejas y grupos pequeños.
 
-Contacto: +34 612 345 678 (WhatsApp) · javier@chofer-guia-madrid.es`,
-    expect: { fullName: "Javier López", whatsapp: "+34612345678", whatsappConfirmed: true, vehicleType: "Minivan", clientExperience: ["Indian", "American", "Chinese"], isIndependent: true, countryCode: "ES" },
+Contacto: +34 612 847 391 (WhatsApp) · javier@chofer-guia-madrid.es`,
+    expect: { fullName: "Javier López", whatsapp: "+34612847391", whatsappConfirmed: true, vehicleType: "Minivan", clientExperience: ["Indian", "American", "Chinese"], isIndependent: true, countryCode: "ES" },
   },
   {
     name: "Marketplace boilerplate must not fabricate nationalities or vehicles",
@@ -187,10 +207,10 @@ I got into a cab randomly and asked the driver to bring me to the Berlin Wall Me
     url: "https://example-guide.it/",
     markdown: `# Marco Rossi
 Guida turistica e autista privato a Roma con Mercedes Classe V. Ho lavorato con molti clienti indiani e americani.
-Telefono: +39 333 123 4567`,
-    llm: { pageType: "profile", guides: [{ fullName: "Marco Rossi", phone: "+39 333 123 4567", whatsapp: "+39 333 123 4567", vehicleType: "Minivan", vehicleEvidence: "Mercedes Classe V", clientExperience: ["Indian", "American", "Chinese"], clientExperienceEvidence: ["clienti indiani", "americani", "clienti cinesi"], services: ["Driver-Guide"], languages: ["Italian", "English"] }] },
+Telefono: +39 333 481 7265`,
+    llm: { pageType: "profile", guides: [{ fullName: "Marco Rossi", phone: "+39 333 481 7265", whatsapp: "+39 333 481 7265", vehicleType: "Minivan", vehicleEvidence: "Mercedes Classe V", clientExperience: ["Indian", "American", "Chinese"], clientExperienceEvidence: ["clienti indiani", "americani", "clienti cinesi"], services: ["Driver-Guide"], languages: ["Italian", "English"] }] },
     // no WhatsApp label on page → number kept as phone, whatsapp unconfirmed; "Chinese" has no page evidence → dropped
-    expect: { phone: "+393331234567", whatsappConfirmed: false, vehicleType: "Minivan", clientExperience: ["Indian", "American"], services: ["Driver-Guide", "Driver", "Guide"] },
+    expect: { phone: "+393334817265", whatsappConfirmed: false, vehicleType: "Minivan", clientExperience: ["Indian", "American"], services: ["Driver-Guide", "Driver", "Guide"] },
   },
   {
     name: "Forum thread splits into one record per phone (regex mode)",
@@ -199,10 +219,40 @@ Telefono: +39 333 123 4567`,
     mode: "regex",
     markdown: `# Switzerland driver recommendation
 
-We used Peter Schmid for 3 days in Interlaken, he has a 7 seater Mercedes van, perfect for our family of 5 from Mumbai. WhatsApp: +41 79 123 45 67.
+We used Peter Schmid for 3 days in Interlaken, he has a 7 seater Mercedes van, perfect for our family of 5 from Mumbai. WhatsApp: +41 79 318 42 67.
 
 Another option is Luca Bianchi in Lugano, sedan only, contact +41 76 987 65 43, speaks Hindi a little.`,
     expect: { count: 2 },
+  },
+  {
+    name: "Non-target country named by the model is not relabelled with the scrape hint",
+    countryCode: "CH",
+    url: "https://www.indiaworldwidetravel.example/switzerland-tours",
+    markdown: `# India Worldwide Travel
+Rajasthan and Kerala packages for Swiss residents. Office Jaipur, India. Call/WhatsApp +91 94139 01196`,
+    llm: { pageType: "company", guides: [{ fullName: "India Worldwide Travel", country: "India", city: "Jaipur", whatsapp: "+91 94139 01196", services: ["Driver"] }] },
+    expect: { count: 0 },
+  },
+  {
+    name: "Model-only WhatsApp number is never confirmed by an unrelated WhatsApp mention",
+    countryCode: "JP",
+    url: "https://marketplace.example/guides/tokyo",
+    markdown: `# Tokyo private guides
+[Chat on WhatsApp](https://marketplace.example/chat)
+
+## Taro Yamada
+Licensed guide, Toyota Alphard 7 seats. Tel 03-5428-7316`,
+    llm: { pageType: "listing", guides: [{ fullName: "Taro Yamada", whatsapp: "+81 90 1111 2222", vehicleType: "Minivan", vehicleEvidence: "Toyota Alphard 7 seats" }] },
+    expect: { whatsapp: null, whatsappConfirmed: false, phone: "+81354287316", vehicleType: "Minivan" },
+  },
+  {
+    name: "Placeholder phone numbers are rejected instead of becoming the dedupe key",
+    countryCode: "CH",
+    url: "https://template-site.example/kontakt",
+    markdown: `# Chauffeur Zürich
+Rufen Sie uns an: +41 12 345 67 89 · info@template-site.example`,
+    llm: { pageType: "profile", guides: [{ fullName: "Chauffeur Zürich", phone: "+41 12 345 67 89", email: "info@template-site.example" }] },
+    expect: { phone: null, email: "info@template-site.example" },
   },
 ];
 
@@ -220,6 +270,7 @@ function fixtureChecks(): GuideRecordInput[] {
     all.push(...records);
     const { count, ...fields } = f.expect;
     if (count !== undefined) check(records.length === count, `${f.name}: yields ${count} records`, { got: records.length });
+    if (count === 0) continue;
     const rec = records[0];
     check(Boolean(rec), `${f.name}: yields a record`);
     if (!rec) continue;

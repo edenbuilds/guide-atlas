@@ -272,9 +272,12 @@ export const VEHICLE_RULES: KeywordRule<VehicleType>[] = [
       "エルグランド", "ノア", "ヴォクシー", "セレナ", "미니밴", "밴 ", "카니발", "스타렉스", "스타리아",
       ww("v[- ]?class"), ww("v[- ]?klasse"), ww("classe v"), ww("clase v"), ww("vito"), ww("viano"), ww("alphard"),
       ww("vellfire"), ww("hiace"), ww("sienna"), ww("odyssey"), ww("caravelle"), ww("multivan"), ww("transporter"),
-      ww("carnival"), ww("starex"), ww("staria"), ww("grand starex"), ww("noah"), ww("voxy"), ww("serena"), ww("elgrand"),
-      ww("granvia"), ww("tourneo"), ww("sharan"), ww("zafira"), ww("touran"), ww("traveller"), ww("spacetourer"),
-      ww("proace"), ww("vivaro"), ww("trafic"), ww("expert"), ww("jumpy"), ww("evalia"), ww("nv200"), ww("nv350"), ww("marco polo"),
+      // Venice has a carnival and guides are called Noah/Serena: these models need the make.
+      ww("kia carnival"), ww("starex"), ww("staria"), ww("grand starex"), ww("toyota noah"), ww("voxy"), ww("nissan serena"), ww("elgrand"),
+      ww("granvia"), ww("tourneo"), ww("sharan"), ww("zafira"), ww("touran"), ww("spacetourer"),
+      // "expert" / "traveller" / "jumpy" are ordinary words: only count them as Peugeot/Citroën vans with the make.
+      ww("peugeot (expert|traveller)"), ww("citro[eë]n (jumpy|spacetourer)"),
+      ww("proace"), ww("vivaro"), ww("trafic"), ww("evalia"), ww("nv200"), ww("nv350"), ww("marco polo"),
       // 6–8 seats
       "(?:[6-8])[ -]?(?:seater|seats|pax|passengers|places|posti|plazas|sitzer|plätze|personen|人乗り|인승)",
       "(?:up to|bis zu|jusqu'à|fino a|hasta|até) [6-8] (?:people|persons|passengers|personen|personnes|persone|personas|pessoas)",

@@ -136,7 +136,7 @@ export const PLATFORM_DOMAINS = [
 const EMAIL_RE = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/giu;
 const URL_RE = /https?:\/\/[^\s)\]"'<>]+/giu;
 const WA_LINK_RE = /(?:https?:\/\/)?(?:wa\.me|api\.whatsapp\.com\/send|chat\.whatsapp\.com)\/?(?:\?phone=)?\+?(\d{7,15})/giu;
-const TEL_LINK_RE = /tel:\+?([\d\s().-]{7,20})/giu;
+const TEL_LINK_RE = /tel:(\+?[\d\s().-]{7,20})/giu;
 
 const NAME_STOPWORDS =
   /^(home|about|contact|guide|guides|tour|tours|profile|login|menu|search|reviews?|blog|faq|book|booking|private|driver|welcome|unknown|n\/?a|null|undefined)$/i;
@@ -182,7 +182,10 @@ function cleanText(markdown: string): string {
 
 /** Text used for keyword classification: URLs and image paths removed so "auto"/"van" in a CDN path never count. */
 function classificationText(text: string): string {
-  return text.replace(URL_RE, " ").replace(/\S+\.(png|jpe?g|gif|svg|webp)\b/gi, " ");
+  return text
+    .replace(URL_RE, " ")
+    .replace(EMAIL_RE, " ")
+    .replace(/\S+\.(png|jpe?g|gif|svg|webp)\b/gi, " ");
 }
 
 const REVIEWS_HEADING =
@@ -254,16 +257,20 @@ export function matchRules<T extends string>(text: string, rules: KeywordRule<T>
 // Contact extraction
 // ---------------------------------------------------------------------------------------------
 
+/** "+41 12 345 67 89", "+81 90 1234 5678", "+49 000 0000000": template placeholders that pass libphonenumber. */
+const PLACEHOLDER_DIGITS = /1234567|7654321|(\d)\1{6}/;
+
 export function toE164(raw: string | null | undefined, defaultCountry?: CountryCode): string | null {
   if (!raw) return null;
   const cleaned = raw.replace(/[^\d+()\s.-]/g, " ").trim();
   if (cleaned.replace(/\D/g, "").length < 7) return null;
+  if (PLACEHOLDER_DIGITS.test(cleaned.replace(/\D/g, ""))) return null;
   try {
     const compact = cleaned.replace(/[\s().-]/g, "");
     // "00" international prefix
     if (/^00\d/.test(compact)) {
       const alt = parsePhoneNumberFromString(`+${compact.slice(2)}`);
-      if (alt && alt.isPossible()) return alt.number;
+      if (alt && alt.isValid()) return alt.number;
     }
     // Bare "919413901196" already carries a country code: prefer that reading when it is a valid
     // number and the default-country reading is not.
@@ -272,8 +279,10 @@ export function toE164(raw: string | null | undefined, defaultCountry?: CountryC
       const local = parsePhoneNumberFromString(cleaned, defaultCountry);
       if (intl?.isValid() && !local?.isValid()) return intl.number;
     }
+    // Full validity (not just length) keeps placeholders such as "+41 12 345 67 89" out of the
+    // contact fields and therefore out of the dedupe key.
     const parsed = parsePhoneNumberFromString(cleaned, defaultCountry);
-    if (parsed && parsed.isPossible()) return parsed.number;
+    if (parsed && parsed.isValid()) return parsed.number;
   } catch {
     /* ignore */
   }
@@ -283,7 +292,7 @@ export function toE164(raw: string | null | undefined, defaultCountry?: CountryC
 export function extractPhones(text: string, defaultCountry?: CountryCode): PhoneHit[] {
   const hits = new Map<string, PhoneHit>();
   const add = (e164: string | null, index: number, length: number, whatsapp: boolean, viaLink = false) => {
-    if (!e164) return;
+    if (!e164 || PLACEHOLDER_DIGITS.test(e164.replace(/\D/g, ""))) return;
     const existing = hits.get(e164);
     if (existing) {
       existing.whatsapp = existing.whatsapp || whatsapp;
@@ -311,14 +320,30 @@ export function extractPhones(text: string, defaultCountry?: CountryCode): Phone
     /* libphonenumber can throw on exotic input; fall through */
   }
 
-  // 4. WhatsApp proximity: a WhatsApp mention within ±120 chars of a number confirms it.
+  // 4. WhatsApp proximity: a WhatsApp label in the same paragraph as the number confirms it.
   for (const hit of hits.values()) {
     if (hit.whatsapp) continue;
-    const window = text.slice(Math.max(0, hit.index - 120), hit.index + hit.length + 120);
-    if (WHATSAPP_PATTERN.test(window)) hit.whatsapp = true;
+    if (whatsappLabelNear(text, hit.index, hit.length)) hit.whatsapp = true;
   }
 
   return Array.from(hits.values()).sort((a, b) => a.index - b.index);
+}
+
+/**
+ * True when a WhatsApp mention sits within ±120 chars of the number *and* inside the same paragraph
+ * (no blank line or heading in between). A marketplace "Chat on WhatsApp" button in the previous
+ * block must not confirm a guide's landline.
+ */
+export function whatsappLabelNear(text: string, index: number, length: number): boolean {
+  let start = Math.max(0, index - 120);
+  let end = Math.min(text.length, index + length + 120);
+  const before = text.slice(start, index);
+  const breakBefore = Math.max(before.lastIndexOf("\n\n"), before.lastIndexOf("\n#"));
+  if (breakBefore !== -1) start += breakBefore;
+  const after = text.slice(index + length, end);
+  const breakAfter = [after.indexOf("\n\n"), after.indexOf("\n#")].filter((i) => i !== -1);
+  if (breakAfter.length) end = index + length + Math.min(...breakAfter);
+  return WHATSAPP_PATTERN.test(text.slice(start, end));
 }
 
 /** Snap a model-reported number onto the page's own extraction when the last 8 digits agree. */
@@ -366,7 +391,7 @@ export function classifyVehicle(
   text: string,
   llm?: RawGuide,
 ): { type: VehicleType | null; capacity: number | null; details: string | null; evidence: string[] } {
-  const matches = matchRules(text, VEHICLE_RULES).filter((m) => m.label !== "Unknown");
+  const matches = matchRules(text, VEHICLE_RULES);
   const capacity = extractCapacity(text, llm?.vehicleCapacity ?? null);
 
   let type: VehicleType | null = null;
@@ -407,7 +432,7 @@ export function classifyVehicle(
 
   // Details come from the model only when they are grounded in the page; raw snippets live in `evidence`.
   let details = llm?.vehicleDetails?.trim() || null;
-  if (details && !fuzzyIncludes(text, details) && !/\d/.test(details)) details = null;
+  if (details && (type === null || !fuzzyIncludes(text, details))) details = null;
 
   return { type, capacity, details, evidence };
 }
@@ -559,14 +584,18 @@ export function nameFromTitle(title: string | undefined, url: string): string | 
 // Fingerprint & confidence
 // ---------------------------------------------------------------------------------------------
 
+/**
+ * Dedupe key: sha1 of the strongest identifier available. A phone number gets the same key whether
+ * or not a given page labels it as WhatsApp, so one operator never splits into wa:/tel: rows.
+ * Name-only keys include the source domain because two marketplaces can list homonymous guides.
+ */
 export function fingerprintFor(parts: { whatsapp?: string | null; phone?: string | null; email?: string | null; name: string; country: string; sourceDomain: string }): string {
-  const key = parts.whatsapp
-    ? `wa:${parts.whatsapp}`
-    : parts.phone
-      ? `tel:${parts.phone}`
-      : parts.email
-        ? `mail:${parts.email.toLowerCase()}`
-        : `name:${parts.name.toLowerCase().normalize("NFKD").replace(/[^\p{L}\p{N}]+/gu, "")}|${parts.country.toLowerCase()}|${parts.sourceDomain}`;
+  const number = parts.whatsapp ?? parts.phone;
+  const key = number
+    ? `num:${number}`
+    : parts.email
+      ? `mail:${parts.email.toLowerCase()}`
+      : `name:${parts.name.toLowerCase().normalize("NFKD").replace(/[^\p{L}\p{N}]+/gu, "")}|${parts.country.toLowerCase()}|${parts.sourceDomain}`;
   return createHash("sha1").update(key).digest("hex");
 }
 
@@ -598,22 +627,25 @@ export function scoreConfidence(record: {
 // Main entry points
 // ---------------------------------------------------------------------------------------------
 
+function countryFromPhones(phones: PhoneHit[]): CountryInfo | undefined {
+  for (const p of phones) {
+    const parsed = parsePhoneNumberFromString(p.e164);
+    const info = countryByCode(parsed?.country ?? null);
+    if (info) return info;
+  }
+  return undefined;
+}
+
 function resolveCountry(llm: RawGuide | undefined, ctx: NormalizeContext, phones: PhoneHit[], text: string): CountryInfo | undefined {
-  return (
-    findCountry(llm?.country) ??
-    findCountry(llm?.region) ??
-    findCountry(llm?.city) ??
-    ctx.countryHint ??
-    (() => {
-      for (const p of phones) {
-        const parsed = parsePhoneNumberFromString(p.e164);
-        const info = countryByCode(parsed?.country ?? null);
-        if (info) return info;
-      }
-      return undefined;
-    })() ??
-    detectCountryInText(text)
-  );
+  const fromLlm = findCountry(llm?.country) ?? findCountry(llm?.region) ?? findCountry(llm?.city);
+  if (fromLlm) return fromLlm;
+
+  // The model named a country we could not map to one of the 50 markets (e.g. "India" for an Indian
+  // agency found via a Swiss search). Do not let the scrape-target hint relabel it: only keep the
+  // record when a phone number on the page proves a presence inside a target market.
+  if (llm?.country?.trim()) return countryFromPhones(phones);
+
+  return ctx.countryHint ?? countryFromPhones(phones) ?? detectCountryInText(text);
 }
 
 /** Build one record from an LLM guide object (or `undefined` in regex mode) plus page text. */
@@ -640,9 +672,12 @@ export function buildRecord(llm: RawGuide | undefined, ctx: NormalizeContext, op
   const llmWhatsapp = reconcileWithPage(toE164(llm?.whatsapp, country.code), phones);
   const llmPhone = reconcileWithPage(toE164(llm?.phone, country.code), phones);
   const pageWhatsapp = phones.find((p) => p.whatsapp)?.e164 ?? null;
-  const whatsapp = llmWhatsapp && phones.some((p) => p.e164 === llmWhatsapp) ? llmWhatsapp : (pageWhatsapp ?? llmWhatsapp);
-  const whatsappConfirmed = Boolean(whatsapp && (phones.some((p) => p.e164 === whatsapp && p.whatsapp) || (llmWhatsapp === whatsapp && WHATSAPP_PATTERN.test(fullText))));
-  const phone = llmPhone && phones.some((p) => p.e164 === llmPhone) ? llmPhone : (phones.find((p) => p.e164 !== whatsapp)?.e164 ?? llmPhone ?? whatsapp);
+  const onPage = (n: string | null) => Boolean(n && phones.some((p) => p.e164 === n));
+  // A model-reported number that never appears in the page text is only kept when the page has no
+  // parseable numbers at all (obfuscated contact blocks); it can never be "confirmed".
+  const whatsapp = onPage(llmWhatsapp) ? llmWhatsapp : (pageWhatsapp ?? (phones.length === 0 ? llmWhatsapp : null));
+  const whatsappConfirmed = Boolean(whatsapp && phones.some((p) => p.e164 === whatsapp && p.whatsapp));
+  const phone = onPage(llmPhone) ? llmPhone : (phones.find((p) => p.e164 !== whatsapp)?.e164 ?? (phones.length === 0 ? llmPhone : null) ?? whatsapp);
 
   const emails = extractEmails(fullText);
   const llmEmail = llm?.email?.toLowerCase().trim();
@@ -650,7 +685,8 @@ export function buildRecord(llm: RawGuide | undefined, ctx: NormalizeContext, op
 
   const websites = extractWebsites(fullText, ctx.sourceUrl);
   const llmSite = llm?.website?.trim();
-  const website = llmSite && /^https?:\/\//i.test(llmSite) && !isPlatformDomain(domainOf(llmSite)) ? llmSite : (websites[0] ?? null);
+  const website =
+    llmSite && /^https?:\/\//i.test(llmSite) && !isPlatformDomain(domainOf(llmSite)) && domainOf(llmSite) !== sourceDomain ? llmSite : (websites[0] ?? null);
 
   // --- classification --------------------------------------------------------------------
   const vehicle = classifyVehicle(text, llm);
@@ -683,8 +719,8 @@ export function buildRecord(llm: RawGuide | undefined, ctx: NormalizeContext, op
   if (clients.evidence.length) evidence.clientExperience = clients.evidence;
   if (svc.evidence.length) evidence.services = svc.evidence;
   if (whatsappConfirmed && whatsapp) {
-    const hit = phones.find((p) => p.e164 === whatsapp);
-    evidence.whatsapp = [hit ? snippet(fullText, hit.index, hit.length, 60) : "model-reported WhatsApp number"];
+    const hit = phones.find((p) => p.e164 === whatsapp)!;
+    evidence.whatsapp = [snippet(fullText, hit.index, hit.length, 60)];
   }
 
   const fingerprint = fingerprintFor({ whatsapp, phone, email, name, country: country.name, sourceDomain });
@@ -819,8 +855,7 @@ export function normalizePageRegex(ctx: NormalizeContext): GuideRecordInput[] {
     const segEnd = i + 1 < phones.length ? phones[i + 1].index : Math.min(fullText.length, p.index + p.length + 400);
     const local = fullText.slice(segStart, segEnd);
     const relIdx = p.index - segStart;
-    const waWindow = local.slice(Math.max(0, relIdx - 120), relIdx + p.length + 120);
-    const scoped: PhoneHit = { ...p, whatsapp: p.viaLink || WHATSAPP_PATTERN.test(waWindow) };
+    const scoped: PhoneHit = { ...p, whatsapp: p.viaLink || whatsappLabelNear(local, relIdx, p.length) };
     const name = guessNameNear(local, relIdx) ?? nameFromMarkdown(ctx.markdown) ?? nameFromTitle(ctx.pageTitle, ctx.sourceUrl);
     const rec = buildRecord(name ? { fullName: name, phone: scoped.e164, whatsapp: scoped.whatsapp ? scoped.e164 : null } : undefined, ctx, {
       allPhones: [scoped],

@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { IngestPayloadSchema, type GuideRecord } from "@/lib/guide-schema";
+import { GuideRecordSchema, IngestEnvelopeSchema, type GuideRecord } from "@/lib/guide-schema";
 import { mergeInto } from "@/lib/guide-merge";
 
 export const runtime = "nodejs";
@@ -40,30 +40,41 @@ async function handleIngest(req: NextRequest) {
     return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
   }
 
-  const parsed = IngestPayloadSchema.safeParse(body);
-  if (!parsed.success) {
+  const envelope = IngestEnvelopeSchema.safeParse(body);
+  if (!envelope.success) {
     return NextResponse.json(
-      { error: "validation failed", issues: parsed.error.issues.slice(0, 50).map((i) => ({ path: i.path.join("."), message: i.message })) },
+      { error: "validation failed", issues: envelope.error.issues.slice(0, 50).map((i) => ({ path: i.path.join("."), message: i.message })) },
       { status: 422 },
     );
   }
 
-  const { guides, run } = parsed.data;
+  const { run } = envelope.data;
+  const errors: Array<{ index: number; error: string }> = [];
+
+  // Validate record by record: invalid ones are reported with the caller's index, valid ones land.
+  const guides: Array<{ index: number; record: GuideRecord }> = [];
+  envelope.data.guides.forEach((raw, index) => {
+    const result = GuideRecordSchema.safeParse(raw);
+    if (result.success) guides.push({ index, record: result.data });
+    else errors.push({ index, error: result.error.issues.map((i) => `${i.path.join(".") || "record"}: ${i.message}`).join("; ") });
+  });
+  if (guides.length === 0) {
+    return NextResponse.json({ error: "validation failed", received: envelope.data.guides.length, errors: errors.slice(0, 50) }, { status: 422 });
+  }
 
   // De-duplicate inside the batch (same fingerprint twice → keep the higher-confidence one).
-  const byFingerprint = new Map<string, GuideRecord>();
+  const byFingerprint = new Map<string, { index: number; record: GuideRecord }>();
   for (const g of guides) {
-    const prev = byFingerprint.get(g.fingerprint);
-    if (!prev || g.confidence >= prev.confidence) byFingerprint.set(g.fingerprint, g);
+    const prev = byFingerprint.get(g.record.fingerprint);
+    if (!prev || g.record.confidence >= prev.record.confidence) byFingerprint.set(g.record.fingerprint, g);
   }
   const unique = Array.from(byFingerprint.values());
 
-  const existingRows = await prisma.tourGuide.findMany({ where: { fingerprint: { in: unique.map((g) => g.fingerprint) } } });
+  const existingRows = await prisma.tourGuide.findMany({ where: { fingerprint: { in: unique.map((g) => g.record.fingerprint) } } });
   const existing = new Map(existingRows.map((r) => [r.fingerprint, r]));
 
   let created = 0;
   let updated = 0;
-  const errors: Array<{ index: number; error: string }> = [];
 
   // Chunked transactions keep SQLite lock time short while staying atomic per chunk.
   const CHUNK = 50;
@@ -71,29 +82,30 @@ async function handleIngest(req: NextRequest) {
     const chunk = unique.slice(i, i + CHUNK);
     try {
       await prisma.$transaction(
-        chunk.map((g) => {
-          const data = mergeInto(existing.get(g.fingerprint), g);
-          return prisma.tourGuide.upsert({ where: { fingerprint: g.fingerprint }, create: data, update: data });
+        chunk.map(({ record }) => {
+          const data = mergeInto(existing.get(record.fingerprint), record);
+          return prisma.tourGuide.upsert({ where: { fingerprint: record.fingerprint }, create: data, update: data });
         }),
       );
-      for (const g of chunk) {
-        if (existing.has(g.fingerprint)) updated++;
+      for (const { record } of chunk) {
+        if (existing.has(record.fingerprint)) updated++;
         else created++;
       }
     } catch (error) {
       // Fall back to row-by-row so one bad record cannot sink the chunk.
-      for (const [j, g] of chunk.entries()) {
+      for (const { index, record } of chunk) {
         try {
-          const data = mergeInto(existing.get(g.fingerprint), g);
-          await prisma.tourGuide.upsert({ where: { fingerprint: g.fingerprint }, create: data, update: data });
-          if (existing.has(g.fingerprint)) updated++;
+          const data = mergeInto(existing.get(record.fingerprint), record);
+          await prisma.tourGuide.upsert({ where: { fingerprint: record.fingerprint }, create: data, update: data });
+          if (existing.has(record.fingerprint)) updated++;
           else created++;
         } catch (rowError) {
-          errors.push({ index: i + j, error: rowError instanceof Error ? rowError.message : String(rowError ?? error) });
+          errors.push({ index, error: rowError instanceof Error ? rowError.message : String(rowError ?? error) });
         }
       }
     }
   }
+  errors.sort((a, b) => a.index - b.index);
 
   let runId: string | undefined = run?.id;
   if (run) {
@@ -119,10 +131,10 @@ async function handleIngest(req: NextRequest) {
   }
 
   return NextResponse.json({
-    received: guides.length,
+    received: envelope.data.guides.length,
     created,
     updated,
-    skipped: guides.length - unique.length + errors.length,
+    skipped: envelope.data.guides.length - created - updated,
     runId,
     errors,
   });

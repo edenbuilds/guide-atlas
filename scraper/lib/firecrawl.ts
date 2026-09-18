@@ -126,8 +126,10 @@ export class FirecrawlClient {
     this.apiKey = opts.apiKey;
     this.baseUrl = (opts.baseUrl ?? "https://api.firecrawl.dev").replace(/\/$/, "");
     this.semaphore = new Semaphore(opts.maxConcurrency ?? 2);
-    const rpm = opts.requestsPerMinute ?? 60;
-    this.bucket = new TokenBucket(Math.max(2, Math.ceil(rpm / 6)), rpm / 60_000);
+    // Firecrawl's entry plans allow ~15-20 scrape requests/min; the bucket keeps us under that so
+    // 429s (and their mandatory back-off) are the exception rather than the steady state.
+    const rpm = opts.requestsPerMinute ?? 10;
+    this.bucket = new TokenBucket(Math.max(2, Math.ceil(rpm / 5)), rpm / 60_000);
     this.retries = opts.retries ?? 4;
     if (opts.maxConcurrency) this.tuned = true;
   }

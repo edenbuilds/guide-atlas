@@ -145,6 +145,14 @@ export function findCountry(input: string | null | undefined): CountryInfo | und
   return undefined;
 }
 
+/** Nationality label that describes the guide's own market rather than foreign clients. */
+export const SELF_CLIENT_LABEL: Partial<Record<string, string>> = {
+  JP: "Japanese",
+  KR: "Korean",
+  TW: "Chinese",
+  EG: "Middle Eastern",
+};
+
 export function countryByCode(code: string | null | undefined): CountryInfo | undefined {
   if (!code) return undefined;
   return COUNTRIES.find((c) => c.code === code.toUpperCase());

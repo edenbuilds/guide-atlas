@@ -31,7 +31,7 @@ import {
   WHATSAPP_PATTERN,
   type KeywordRule,
 } from "./dictionaries";
-import { countryByCode, detectCountryInText, findCountry, type CountryInfo } from "./countries";
+import { SELF_CLIENT_LABEL, countryByCode, detectCountryInText, findCountry, type CountryInfo } from "./countries";
 import {
   CLIENT_NATIONALITIES,
   SERVICE_TYPES,
@@ -259,13 +259,21 @@ export function toE164(raw: string | null | undefined, defaultCountry?: CountryC
   const cleaned = raw.replace(/[^\d+()\s.-]/g, " ").trim();
   if (cleaned.replace(/\D/g, "").length < 7) return null;
   try {
-    const parsed = parsePhoneNumberFromString(cleaned, defaultCountry);
-    if (parsed && parsed.isPossible()) return parsed.number;
+    const compact = cleaned.replace(/[\s().-]/g, "");
     // "00" international prefix
-    if (/^00\d/.test(cleaned.replace(/\s/g, ""))) {
-      const alt = parsePhoneNumberFromString(`+${cleaned.replace(/\s/g, "").slice(2)}`);
+    if (/^00\d/.test(compact)) {
+      const alt = parsePhoneNumberFromString(`+${compact.slice(2)}`);
       if (alt && alt.isPossible()) return alt.number;
     }
+    // Bare "919413901196" already carries a country code: prefer that reading when it is a valid
+    // number and the default-country reading is not.
+    if (!compact.startsWith("+") && compact.length >= 11) {
+      const intl = parsePhoneNumberFromString(`+${compact}`);
+      const local = parsePhoneNumberFromString(cleaned, defaultCountry);
+      if (intl?.isValid() && !local?.isValid()) return intl.number;
+    }
+    const parsed = parsePhoneNumberFromString(cleaned, defaultCountry);
+    if (parsed && parsed.isPossible()) return parsed.number;
   } catch {
     /* ignore */
   }
@@ -313,6 +321,15 @@ export function extractPhones(text: string, defaultCountry?: CountryCode): Phone
   return Array.from(hits.values()).sort((a, b) => a.index - b.index);
 }
 
+/** Snap a model-reported number onto the page's own extraction when the last 8 digits agree. */
+export function reconcileWithPage(candidate: string | null, phones: PhoneHit[]): string | null {
+  if (!candidate) return null;
+  if (phones.some((p) => p.e164 === candidate)) return candidate;
+  const tail = candidate.replace(/\D/g, "").slice(-8);
+  const match = phones.find((p) => p.e164.replace(/\D/g, "").endsWith(tail));
+  return match ? match.e164 : candidate;
+}
+
 export function extractEmails(text: string): string[] {
   const emails = unique(Array.from(text.matchAll(EMAIL_RE), (m) => m[0].toLowerCase()));
   return emails.filter((e) => {
@@ -341,8 +358,9 @@ export function extractWebsites(text: string, sourceUrl: string): string[] {
 // ---------------------------------------------------------------------------------------------
 
 const VEHICLE_PRIORITY: VehicleType[] = ["Minivan", "Minibus", "Coach", "SUV", "Sedan", "Motorcycle", "None", "Unknown"];
+/** "Has a car, type unspecified" → vehicleType "Unknown". Sedan is only asserted on explicit evidence. */
 const GENERIC_CAR_PATTERN =
-  /(?<![\p{L}])(cars?|vehicles?|voiture|véhicule|auto|autos|pkw|wagen|fahrzeug|macchina|veicolo|coche|vehículo|carro|veículo|samoch[oó]d|pojazd|vozidlo|autó|jármű|mașin[aă]|автомоб|машин|αυτοκίνητο|araç|araba|vozilo|bil|auto|車|クルマ|車両|차량|자동차|승용차|รถ|xe|mobil)(?![\p{L}])/iu;
+  /(?<![\p{L}])(private (car|vehicle)s?|luxury (car|vehicle)s?|executive cars?|premium cars?|comfortable (car|vehicle)|chauffeur[- ]driven( car)?|(own|my|our) (car|vehicle)s?|car (tours?|service|hire|rental|with driver)s?|(?:by|with|in) (?:a |my |our |the )?(?:private |own |comfortable |air[- ]conditioned )?(car|vehicle|voiture|auto|wagen|pkw|macchina|coche|carro|samoch[oó]d|vozidlo|autó|mașin[aă]|автомоб\p{L}*|машин\p{L}*|αυτοκίνητο|araç|araba|vozilo|bil|autolla|车|車)|voiture (priv[eé]e|avec chauffeur)|v[eé]hicule|eigene[snm]? (auto|fahrzeug|pkw|wagen)|fahrzeug|auto privata|mia auto|veicolo|coche (privado|particular|propio)|vehículo|carro (particular|próprio)|veículo|eigen auto|voertuig|własnym samochodem|vlastním autem|saját autó\p{L}*|mașina proprie|на (своем|своём|собственном) (авто|автомобиле)|özel araç|araçla|vlastitim automobilom|egen bil|omalla autolla|乗用車|自家用車|車で|マイカー|ハイヤー|専用車|승용차|차량|자가용|전용 차량|รถ(ส่วนตัว|ยนต์)|xe riêng|mobil pribadi)(?![\p{L}])/iu;
 
 export function classifyVehicle(
   text: string,
@@ -619,8 +637,8 @@ export function buildRecord(llm: RawGuide | undefined, ctx: NormalizeContext, op
   if (!country) return null; // outside our 50 markets or undeterminable
 
   // --- contact ---------------------------------------------------------------------------
-  const llmWhatsapp = toE164(llm?.whatsapp, country.code);
-  const llmPhone = toE164(llm?.phone, country.code);
+  const llmWhatsapp = reconcileWithPage(toE164(llm?.whatsapp, country.code), phones);
+  const llmPhone = reconcileWithPage(toE164(llm?.phone, country.code), phones);
   const pageWhatsapp = phones.find((p) => p.whatsapp)?.e164 ?? null;
   const whatsapp = llmWhatsapp && phones.some((p) => p.e164 === llmWhatsapp) ? llmWhatsapp : (pageWhatsapp ?? llmWhatsapp);
   const whatsappConfirmed = Boolean(whatsapp && (phones.some((p) => p.e164 === whatsapp && p.whatsapp) || (llmWhatsapp === whatsapp && WHATSAPP_PATTERN.test(fullText))));
@@ -637,6 +655,12 @@ export function buildRecord(llm: RawGuide | undefined, ctx: NormalizeContext, op
   // --- classification --------------------------------------------------------------------
   const vehicle = classifyVehicle(text, llm);
   const clients = classifyClients(text, llm, reviewText);
+  // A Japanese guide mentioning "Japanese culture" is not evidence of Japanese clients.
+  const selfLabel = SELF_CLIENT_LABEL[country.code];
+  if (selfLabel) {
+    clients.labels = clients.labels.filter((l) => l !== selfLabel);
+    clients.evidence = clients.evidence.filter((e) => !e.startsWith(`${selfLabel}:`));
+  }
   const svc = classifyServices(text, llm);
 
   const worksWithCouples = COUPLES_PATTERN.test(text) ? true : (llm?.worksWithCouples ?? null);

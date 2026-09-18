@@ -34,7 +34,7 @@ export interface KeywordRule<T extends string> {
 
 /** Words that indicate a nationality mention is about clients rather than a place, currency or cuisine. */
 export const CLIENT_CONTEXT =
-  /client|guest|tourist|travel+er|visitor|group|customer|famil|couple|honeymoon|passenger|people from|worked with|guided|hosted|welcom|served|specialis|specializ|experience with|from (all over )?(?!the page)|gäste|kunden|touristen|reisende|besucher|gruppen|familien|touristes|voyageurs|visiteurs|groupes|familles|clienti|turisti|ospiti|visitatori|gruppi|famiglie|clientes|turistas|visitantes|huéspedes|grupos|familias|gasten|klanten|toeristen|groepen|gezinnen|klienci|turyści|goście|grupy|klienti|turisté|hosté|skupiny|vendégek|turisták|csoportok|clienți|turiști|grupuri|клиент|турист|гост|групп|семь|πελάτ|τουρίστ|επισκέπτ|ομάδ|müşteri|turist|misafir|grup|gosti|klijenti|turisti|grupe|kunder|gäster|turister|grupper|asiakkaat|turistit|ryhmät|お客様|お客さま|観光客|旅行者|ゲスト|の方|団体|グループ|ご家族|고객|관광객|여행자|손님|단체|가족|ลูกค้า|นักท่องเที่ยว|khách|du khách|tamu|wisatawan|عملاء|سياح|زوار/iu;
+  /client|guest|tourist|travel+er|visitor|group|customer|famil|couple|honeymoon|passenger|people from|worked with|guided|hosted|welcom|served|specialis|specializ|experience with|people from|guests from|clients from|tourists from|visitors from|gäste|kunden|touristen|reisende|besucher|gruppen|familien|touristes|voyageurs|visiteurs|groupes|familles|clienti|turisti|ospiti|visitatori|gruppi|famiglie|clientes|turistas|visitantes|huéspedes|grupos|familias|gasten|klanten|toeristen|groepen|gezinnen|klienci|turyści|goście|grupy|klienti|turisté|hosté|skupiny|vendégek|turisták|csoportok|clienți|turiști|grupuri|клиент|турист|гост|групп|семь|πελάτ|τουρίστ|επισκέπτ|ομάδ|müşteri|turist|misafir|grup|gosti|klijenti|turisti|grupe|kunder|gäster|turister|grupper|asiakkaat|turistit|ryhmät|お客様|お客さま|観光客|旅行者|ゲスト|の方|団体|グループ|ご家族|고객|관광객|여행자|손님|단체|가족|ลูกค้า|นักท่องเที่ยว|khách|du khách|tamu|wisatawan|عملاء|سياح|زوار/iu;
 
 /** Currency pickers, cuisine and geography boilerplate that produce false nationality hits. */
 const NATIONALITY_NOISE = /dollar|pound|sterling|currency|währung|devise|valuta|moneda|\b(usd|gbp|aud|cad|sgd|myr|jpy|krw|eur|inr|cny|aed|sar)\b|restaurant|cuisine|food|kitchen|embassy|consulate|airline|airways|visa|passport|time zone|timezone|language school|university of/iu;
@@ -293,19 +293,13 @@ export const VEHICLE_RULES: KeywordRule<VehicleType>[] = [
   {
     label: "Sedan",
     pattern: rx([
-      ww("sedans?"), ww("saloon"), ww("berline"), ww("berlina"), ww("limousinen?"), ww("limousine service"), ww("limusina"),
-      ww("limuzyna"), ww("limuzína"), ww("limuzin"), "седан", ww("sedán"), "セダン", "세단", ww("executive car"), ww("luxury car"),
-      ww("premium car"), ww("private car"), ww("chauffeur[- ]driven car"), ww("town car"), ww("black car"),
+      ww("sedans?"), ww("saloon"), ww("berline"), ww("berlina"), ww("limousinen?"), ww("limusina"), ww("limuzyna"), ww("limuzína"),
+      ww("limuzin"), "седан", ww("sedán"), "セダン", "세단", ww("executive sedan"), ww("luxury sedan"),
       ww("e[- ]?class"), ww("e[- ]?klasse"), ww("classe e"), ww("clase e"), ww("s[- ]?class"), ww("s[- ]?klasse"), ww("classe s"),
-      ww("bmw [57]\\p{L}*"), ww("audi a[68]"), ww("tesla"), ww("model [sy3x]"), ww("camry"), ww("crown"), ww("lexus"), ww("genesis"),
-      ww("grandeur"), ww("k9"), ww("skoda superb"), ww("superb"), ww("passat"), ww("mercedes[- ]benz"), ww("mercedes"),
-      ww("car (tour|service|hire|rental|with driver)s?"), ww("(own|my|private) (car|vehicle)"), ww("comfortable car"),
-      ww("mit (eigenem|meinem) (auto|pkw|wagen)"), ww("eigenes auto"), ww("pkw"), ww("en voiture"), ww("ma voiture"), ww("voiture priv[eé]e"),
-      ww("in macchina"), ww("mia auto"), ww("auto privata"), ww("en coche"), ww("mi coche"), ww("coche privado"), ww("coche particular"),
-      ww("meu carro"), ww("carro particular"), ww("eigen auto"), ww("własnym samochodem"), ww("samochodem"), ww("vlastním autem"),
-      ww("saját autó\\p{L}*"), ww("mașina proprie"), "на (своем|своём|собственном) (авто|автомобиле)", "автомобиль", "με αυτοκίνητο",
-      ww("özel araç"), ww("araçla"), ww("vlastitim automobilom"), ww("egen bil"), ww("omalla autolla"), "乗用車", "自家用車", "車で",
-      "マイカー", "ハイヤー", "승용차", "차량", "자가용",
+      ww("bmw [57]\\p{L}*"), ww("audi a[68]"), ww("tesla model [s3]"), ww("camry"), ww("toyota crown"), ww("lexus (ls|es|gs)"), ww("genesis g\\d0"),
+      ww("grandeur"), ww("skoda superb"), ww("passat"), ww("mercedes[- ]benz e"), ww("mercedes e"),
+      // ≤5 seats
+      "(?:[2-5])[ -]?(?:seater|posti|plazas|sitzer|人乗り|인승)",
     ]),
     exclude: /rental car (recommend|tips)|car park|parking|by car from|hire a car yourself|no car|without (a )?car|sans voiture|ohne auto|senza auto|sin coche/iu,
   },

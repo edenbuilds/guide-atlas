@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
-import type { Prisma, TourGuide } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { IngestPayloadSchema, encodeList, decodeList, type GuideRecord } from "@/lib/guide-schema";
+import { IngestPayloadSchema, type GuideRecord } from "@/lib/guide-schema";
+import { mergeInto } from "@/lib/guide-merge";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,75 +21,17 @@ function authorized(req: NextRequest): boolean {
   return header === `Bearer ${required}`;
 }
 
-function union(a: string | null | undefined, b: readonly string[]): string {
-  return encodeList([...decodeList(a), ...b]);
-}
-
-function mergeInto(existing: TourGuide | undefined, incoming: GuideRecord): Prisma.TourGuideUncheckedCreateInput {
-  const pick = <T>(next: T | null | undefined, prev: T | null | undefined): T | null => (next ?? prev ?? null);
-  const whatsappConfirmed = Boolean(incoming.whatsappConfirmed || existing?.whatsappConfirmed);
-  const whatsapp =
-    incoming.whatsappConfirmed && incoming.whatsapp ? incoming.whatsapp : existing?.whatsappConfirmed && existing.whatsapp ? existing.whatsapp : pick(incoming.whatsapp, existing?.whatsapp);
-
-  const evidence = {
-    ...(existing?.evidence ? safeJson<Record<string, string[]>>(existing.evidence) : {}),
-    ...(incoming.evidence ?? {}),
-  };
-
-  return {
-    fingerprint: incoming.fingerprint,
-    fullName: incoming.fullName || existing?.fullName || "Unknown",
-    companyName: pick(incoming.companyName, existing?.companyName),
-    email: pick(incoming.email, existing?.email),
-    phone: pick(incoming.phone, existing?.phone),
-    whatsapp,
-    whatsappConfirmed,
-    website: pick(incoming.website, existing?.website),
-    contactPageUrl: pick(incoming.contactPageUrl, existing?.contactPageUrl),
-    country: incoming.country || existing?.country || "Unknown",
-    countryCode: pick(incoming.countryCode, existing?.countryCode),
-    city: pick(incoming.city, existing?.city),
-    region: pick(incoming.region, existing?.region),
-    vehicleType: preferSpecific(incoming.vehicleType, existing?.vehicleType),
-    vehicleDetails: pick(incoming.vehicleDetails, existing?.vehicleDetails),
-    vehicleCapacity: pick(incoming.vehicleCapacity, existing?.vehicleCapacity),
-    services: union(existing?.services, incoming.services),
-    languages: union(existing?.languages, incoming.languages),
-    clientExperience: union(existing?.clientExperience, incoming.clientExperience),
-    isIndependent: existing ? existing.isIndependent && incoming.isIndependent : incoming.isIndependent,
-    worksWithCouples: pick(incoming.worksWithCouples, existing?.worksWithCouples),
-    smallGroupCapable: pick(incoming.smallGroupCapable, existing?.smallGroupCapable),
-    isTourManager: pick(incoming.isTourManager, existing?.isTourManager),
-    licensed: pick(incoming.licensed, existing?.licensed),
-    yearsExperience: Math.max(incoming.yearsExperience ?? 0, existing?.yearsExperience ?? 0) || null,
-    bio: incoming.bio && (!existing?.bio || incoming.bio.length > existing.bio.length) ? incoming.bio : (existing?.bio ?? null),
-    sourceUrl: incoming.sourceUrl,
-    sourceDomain: incoming.sourceDomain,
-    sourceType: pick(incoming.sourceType, existing?.sourceType),
-    confidence: Math.max(incoming.confidence, existing?.confidence ?? 0),
-    evidence: Object.keys(evidence).length ? JSON.stringify(evidence) : null,
-    rawJson: incoming.rawJson !== undefined ? JSON.stringify(incoming.rawJson) : (existing?.rawJson ?? null),
-    scrapedAt: incoming.scrapedAt ?? new Date(),
-  };
-}
-
-/** "Unknown" is the weakest vehicle class; any concrete class beats it. */
-function preferSpecific(next: string | null | undefined, prev: string | null | undefined): string | null {
-  if (next && next !== "Unknown") return next;
-  if (prev && prev !== "Unknown") return prev;
-  return next ?? prev ?? null;
-}
-
-function safeJson<T>(s: string): T | Record<string, never> {
+export async function POST(req: NextRequest) {
+  if (!authorized(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   try {
-    return JSON.parse(s) as T;
-  } catch {
-    return {};
+    return await handleIngest(req);
+  } catch (error) {
+    console.error("[ingest] unhandled error", error);
+    return NextResponse.json({ error: error instanceof Error ? error.message : "internal error" }, { status: 500 });
   }
 }
 
-export async function POST(req: NextRequest) {
-  if (!authorized(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+async function handleIngest(req: NextRequest) {
 
   let body: unknown;
   try {

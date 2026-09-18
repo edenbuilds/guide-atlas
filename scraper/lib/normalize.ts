@@ -15,8 +15,10 @@ import {
 } from "libphonenumber-js/max";
 import {
   CAPACITY_PATTERN,
+  CLIENT_CONTEXT,
   CLIENT_RULES,
   COMPANY_PATTERN,
+  LEGAL_SUFFIX_PATTERN,
   COUPLES_PATTERN,
   EXPERIENCE_YEARS_PATTERN,
   EXPERIENCE_YEARS_PATTERN_REVERSED,
@@ -93,6 +95,8 @@ export interface PhoneHit {
   index: number;
   length: number;
   whatsapp: boolean;
+  /** number came from a wa.me / api.whatsapp.com link (unconditional WhatsApp confirmation) */
+  viaLink: boolean;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -165,6 +169,7 @@ function unique<T>(values: Iterable<T>): T[] {
   return Array.from(new Set(values));
 }
 
+/** Markdown → plain text that still contains hrefs (for phone / e-mail / website extraction). */
 function cleanText(markdown: string): string {
   return markdown
     .replace(/!\[[^\]]*]\([^)]*\)/g, " ") // images
@@ -173,6 +178,21 @@ function cleanText(markdown: string): string {
     .replace(/\\/g, "")
     .replace(/[ \t]+/g, " ")
     .replace(/\n{3,}/g, "\n\n");
+}
+
+/** Text used for keyword classification: URLs and image paths removed so "auto"/"van" in a CDN path never count. */
+function classificationText(text: string): string {
+  return text.replace(URL_RE, " ").replace(/\S+\.(png|jpe?g|gif|svg|webp)\b/gi, " ");
+}
+
+const REVIEWS_HEADING =
+  /\n\s*(?:#{1,6}\s*)?(?:\d+\s+)?(?:reviews?|ratings?|testimonials?|bewertungen|rezensionen|avis|témoignages|recensioni|reseñas|opiniones|opiniões|avaliações|beoordelingen|recensies|opinie|recenze|hodnocení|vélemények|recenzii|отзывы|κριτικές|yorumlar|recenzije|omdömen|anmeldelser|arvostelut|レビュー|口コミ|クチコミ|お客様の声|리뷰|후기)\s*(?:\(\d+\))?\s*\n/iu;
+
+/** Split a profile page into the operator's own description and the traveller reviews below it. */
+export function splitReviews(text: string): { main: string; reviews: string } {
+  const m = REVIEWS_HEADING.exec(text);
+  if (!m || m.index < 200) return { main: text, reviews: "" };
+  return { main: text.slice(0, m.index), reviews: text.slice(m.index) };
 }
 
 /** Case/diacritic-insensitive containment check used to verify LLM evidence quotes. */
@@ -221,6 +241,7 @@ export function matchRules<T extends string>(text: string, rules: KeywordRule<T>
       }
       const snip = snippet(text, m.index, m[0].length, 40);
       if (rule.exclude && rule.exclude.test(snip)) continue;
+      if (rule.requiresContext && !CLIENT_CONTEXT.test(snippet(text, m.index, m[0].length, 80))) continue;
       count++;
       if (evidence.length < 3) evidence.push(snip);
     }
@@ -253,18 +274,19 @@ export function toE164(raw: string | null | undefined, defaultCountry?: CountryC
 
 export function extractPhones(text: string, defaultCountry?: CountryCode): PhoneHit[] {
   const hits = new Map<string, PhoneHit>();
-  const add = (e164: string | null, index: number, length: number, whatsapp: boolean) => {
+  const add = (e164: string | null, index: number, length: number, whatsapp: boolean, viaLink = false) => {
     if (!e164) return;
     const existing = hits.get(e164);
     if (existing) {
       existing.whatsapp = existing.whatsapp || whatsapp;
+      existing.viaLink = existing.viaLink || viaLink;
     } else {
-      hits.set(e164, { e164, index, length, whatsapp });
+      hits.set(e164, { e164, index, length, whatsapp, viaLink });
     }
   };
 
   // 1. WhatsApp deep links are the strongest possible signal.
-  for (const m of text.matchAll(WA_LINK_RE)) add(toE164(`+${m[1]}`), m.index ?? 0, m[0].length, true);
+  for (const m of text.matchAll(WA_LINK_RE)) add(toE164(`+${m[1]}`), m.index ?? 0, m[0].length, true, true);
 
   // 2. tel: links
   for (const m of text.matchAll(TEL_LINK_RE)) add(toE164(m[1], defaultCountry), m.index ?? 0, m[0].length, false);
@@ -273,7 +295,8 @@ export function extractPhones(text: string, defaultCountry?: CountryCode): Phone
   try {
     const found = findPhoneNumbersInText(text, defaultCountry ? { defaultCountry } : undefined);
     for (const f of found) {
-      if (!f.number.isPossible()) continue;
+      // Free-text hits must be fully valid for their region; link-derived numbers only need to be possible.
+      if (!f.number.isValid()) continue;
       add(f.number.number, f.startsAt, f.endsAt - f.startsAt, false);
     }
   } catch {
@@ -390,8 +413,8 @@ export function extractCapacity(text: string, llmCapacity: number | null): numbe
   return Array.from(freq.entries()).sort((a, b) => b[1] - a[1] || b[0] - a[0])[0][0];
 }
 
-export function classifyClients(text: string, llm?: RawGuide): { labels: ClientNationality[]; evidence: string[] } {
-  const matches = matchRules(text, CLIENT_RULES);
+export function classifyClients(text: string, llm?: RawGuide, reviewText = ""): { labels: ClientNationality[]; evidence: string[] } {
+  const matches = matchRules(reviewText ? `${text}\n${reviewText}` : text, CLIENT_RULES);
   const labels = new Set<ClientNationality>(matches.map((m) => m.label));
   const evidence: string[] = matches.flatMap((m) => m.evidence.slice(0, 2).map((e) => `${m.label}: ${e}`));
 
@@ -463,6 +486,39 @@ export function cleanName(raw: string | null | undefined): string | null {
   if (NAME_STOPWORDS.test(name)) return null;
   if (/^\d+$/.test(name)) return null;
   return name;
+}
+
+const ROLE_WORDS =
+  /^(tour ?guide|driver[- ]?guide|private (tour |driver )?guide|chauffeur|guide|fahrer|reiseleiter|reiseführer|fremdenführer|stadtführer|autista|guida|conductor|chófer|chofer|guía|motorista|guia|gids|przewodnik|kierowca|průvodce|řidič|idegenvezető|sofőr|ghid|șofer|гид|водитель|экскурсовод|ξεναγός|οδηγός|rehber|şoför|vodič|vozač|opas|ドライバー|ガイド|運転手|通訳案内士|기사|가이드|관광통역안내사|프라이빗|private|tours?|touren|visite|servizio|service|kontakt|contact|about|über mich|chi sono|quién soy|プロフィール|自己紹介|소개|in|en|à|a|di|de|w|v|и|で|의|東京|京都|大阪|서울|부산|제주)$/iu;
+
+/** CJK headings have no spaces between role and name ("京都ドライバーガイド佐藤健一"); strip role substrings. */
+const CJK_ROLE_RE =
+  /ドライバーガイド|ドライバー|ガイド|運転手|通訳案内士|全国通訳案内士|観光|プライベート|貸切|タクシー|京都|東京|大阪|奈良|北海道|福岡|沖縄|名古屋|広島|드라이빙|프라이빗|가이드|기사|관광통역안내사|관광|택시|서울|부산|제주|경주|인천|司機導遊|導遊|司機|包車|台北|台灣|台湾|高雄/gu;
+
+/** Pull a person/business name out of the first markdown heading, dropping role and place words. */
+export function nameFromMarkdown(markdown: string): string | null {
+  const heading = /^\s{0,3}#{1,2}\s+(.+?)\s*$/mu.exec(markdown)?.[1];
+  if (!heading) return null;
+  const segments = heading
+    .split(/\s+[|–—\-:·•]\s+|\s*[|｜]\s*|\s+[–—]\s*|\s*[–—]\s+/u)
+    .map((seg) => seg.replace(/[*_`]/g, "").trim())
+    .filter(Boolean);
+  const scored = segments
+    .map((seg) => {
+      const words = seg.split(/\s+/);
+      const roleHits = words.filter((w) => ROLE_WORDS.test(w) || findCountry(w)).length;
+      return { seg, words, roleHits };
+    })
+    .filter((x) => x.words.length - x.roleHits >= 1 && x.seg.length <= 80);
+  if (scored.length === 0) return null;
+  // Prefer the segment with the fewest role words; then strip those words off it.
+  scored.sort((a, b) => a.roleHits - b.roleHits || a.words.length - b.words.length);
+  const best = scored[0];
+  const kept = best.words
+    .filter((w) => !(ROLE_WORDS.test(w) && w.length <= 20) && !findCountry(w))
+    .map((w) => (/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(w) ? w.replace(CJK_ROLE_RE, "") : w))
+    .filter(Boolean);
+  return cleanName(kept.join(" ")) ?? cleanName(best.seg);
 }
 
 export function nameFromTitle(title: string | undefined, url: string): string | null {
@@ -544,11 +600,16 @@ function resolveCountry(llm: RawGuide | undefined, ctx: NormalizeContext, phones
 
 /** Build one record from an LLM guide object (or `undefined` in regex mode) plus page text. */
 export function buildRecord(llm: RawGuide | undefined, ctx: NormalizeContext, opts: { allPhones?: PhoneHit[]; localText?: string } = {}): GuideRecordInput | null {
-  const text = cleanText(opts.localText ?? ctx.markdown);
   const fullText = cleanText(ctx.markdown);
+  const scoped = cleanText(opts.localText ?? ctx.markdown);
+  // Operator description vs. traveller reviews: reviews may prove client nationalities ("we are an
+  // Indian family…") but must not drive services/vehicle ("I asked the taxi driver…").
+  const { main, reviews } = opts.localText ? { main: scoped, reviews: "" } : splitReviews(scoped);
+  const text = classificationText(main.length > 200 ? main : scoped);
+  const reviewText = classificationText(reviews);
   const sourceDomain = domainOf(ctx.sourceUrl);
 
-  const name = cleanName(llm?.fullName) ?? cleanName(llm?.companyName) ?? nameFromTitle(ctx.pageTitle, ctx.sourceUrl);
+  const name = cleanName(llm?.fullName) ?? cleanName(llm?.companyName) ?? nameFromMarkdown(opts.localText ?? ctx.markdown) ?? nameFromTitle(ctx.pageTitle, ctx.sourceUrl);
   if (!name) return null;
   if (isPlatformDomain(sourceDomain) && new RegExp(sourceDomain.split(".")[0], "i").test(name) && name.split(" ").length === 1) return null;
 
@@ -575,7 +636,7 @@ export function buildRecord(llm: RawGuide | undefined, ctx: NormalizeContext, op
 
   // --- classification --------------------------------------------------------------------
   const vehicle = classifyVehicle(text, llm);
-  const clients = classifyClients(text, llm);
+  const clients = classifyClients(text, llm, reviewText);
   const svc = classifyServices(text, llm);
 
   const worksWithCouples = COUPLES_PATTERN.test(text) ? true : (llm?.worksWithCouples ?? null);
@@ -584,8 +645,9 @@ export function buildRecord(llm: RawGuide | undefined, ctx: NormalizeContext, op
   const licensed = LICENSED_PATTERN.test(text) ? true : (llm?.licensed ?? null);
   const yearsExperience = extractYearsExperience(text, llm);
 
-  const companyLike = COMPANY_PATTERN.test(text) && !INDEPENDENT_PATTERN.test(text);
-  const isIndependent = typeof llm?.isIndependent === "boolean" ? llm.isIndependent && !companyLike : !companyLike;
+  const legalEntity = LEGAL_SUFFIX_PATTERN.test(name) || (llm?.companyName ? LEGAL_SUFFIX_PATTERN.test(llm.companyName) : false);
+  const companyLike = legalEntity || (COMPANY_PATTERN.test(text) && !INDEPENDENT_PATTERN.test(text));
+  const isIndependent = legalEntity ? false : typeof llm?.isIndependent === "boolean" ? llm.isIndependent : !companyLike;
 
   const languages = unique((llm?.languages ?? []).map((l) => l.trim()).filter((l) => l.length >= 2 && l.length <= 40 && /^[\p{L}\s()-]+$/u.test(l)));
 
@@ -660,15 +722,56 @@ export function normalizePage(extraction: RawPageExtraction | undefined, ctx: No
 
   const records: GuideRecordInput[] = [];
   const seen = new Set<string>();
+  const segments = guides.length > 1 ? segmentByGuide(fullText, guides) : new Map<RawGuide, Segment | undefined>();
   for (const g of guides) {
-    // Multi-guide pages: scope classification to the paragraph block that mentions this guide.
-    const localText = guides.length > 1 ? localContextFor(fullText, g) : undefined;
-    const rec = buildRecord(g, ctx, { allPhones: guides.length > 1 ? phonesNear(fullText, phones, g) : phones, localText });
+    // Multi-guide pages: scope classification and contact details to this guide's own block of text.
+    const seg = guides.length > 1 ? segments.get(g) : undefined;
+    const localPhones = guides.length > 1 ? (seg && seg.start >= 0 ? phones.filter((p) => p.index >= seg.start && p.index < seg.end) : phonesNear(fullText, phones, g)) : phones;
+    const rec = buildRecord(g, ctx, { allPhones: localPhones, localText: seg?.text });
     if (!rec || seen.has(rec.fingerprint)) continue;
     seen.add(rec.fingerprint);
     records.push(rec);
   }
   return records;
+}
+
+/**
+ * Slice a multi-guide page into per-guide blocks: each block runs from the first mention of a
+ * guide's name to the first mention of the next guide's name. Guides whose name never appears get
+ * `undefined` (→ their record is built from the LLM output only, with page-level contacts ignored).
+ */
+interface Segment {
+  text: string;
+  start: number;
+  end: number;
+}
+
+function segmentByGuide(fullText: string, guides: RawGuide[]): Map<RawGuide, Segment | undefined> {
+  const lower = fullText.toLowerCase();
+  const anchors: Array<{ g: RawGuide; idx: number }> = [];
+  for (const g of guides) {
+    const name = g.fullName?.trim();
+    if (!name) continue;
+    let idx = lower.indexOf(name.toLowerCase());
+    if (idx === -1) {
+      const first = name.split(/\s+/)[0];
+      if (first.length >= 3) idx = lower.indexOf(first.toLowerCase());
+    }
+    if (idx !== -1) anchors.push({ g, idx });
+  }
+  anchors.sort((a, b) => a.idx - b.idx);
+  const out = new Map<RawGuide, Segment | undefined>();
+  anchors.forEach((a, i) => {
+    const start = Math.max(0, a.idx - 80);
+    const end = i + 1 < anchors.length ? anchors[i + 1].idx : Math.min(fullText.length, a.idx + 2500);
+    out.set(a.g, { text: fullText.slice(start, end), start, end });
+  });
+  for (const g of guides) {
+    if (out.has(g)) continue;
+    const text = g.bio ?? `${g.fullName ?? ""} ${g.vehicleDetails ?? ""} ${g.vehicleEvidence ?? ""} ${(g.clientExperienceEvidence ?? []).join(" ")}`;
+    out.set(g, { text, start: -1, end: -1 });
+  }
+  return out;
 }
 
 /** Regex-only normalisation (no LLM). One record per distinct phone number, or one for the page. */
@@ -684,27 +787,25 @@ export function normalizePageRegex(ctx: NormalizeContext): GuideRecordInput[] {
     return records;
   }
 
-  for (const p of phones) {
-    const windowStart = Math.max(0, p.index - 600);
-    const local = fullText.slice(windowStart, p.index + p.length + 300);
-    const name = guessNameNear(local, p.index - windowStart) ?? nameFromTitle(ctx.pageTitle, ctx.sourceUrl);
-    const rec = buildRecord(name ? { fullName: name, phone: p.e164, whatsapp: p.whatsapp ? p.e164 : null } : undefined, ctx, {
-      allPhones: [p],
+  // One segment per phone number: from just after the previous number to just before the next one,
+  // so a neighbour's "WhatsApp:" label or vehicle never leaks into this record.
+  phones.forEach((p, i) => {
+    const segStart = i === 0 ? Math.max(0, p.index - 800) : phones[i - 1].index + phones[i - 1].length;
+    const segEnd = i + 1 < phones.length ? phones[i + 1].index : Math.min(fullText.length, p.index + p.length + 400);
+    const local = fullText.slice(segStart, segEnd);
+    const relIdx = p.index - segStart;
+    const waWindow = local.slice(Math.max(0, relIdx - 120), relIdx + p.length + 120);
+    const scoped: PhoneHit = { ...p, whatsapp: p.viaLink || WHATSAPP_PATTERN.test(waWindow) };
+    const name = guessNameNear(local, relIdx) ?? nameFromMarkdown(ctx.markdown) ?? nameFromTitle(ctx.pageTitle, ctx.sourceUrl);
+    const rec = buildRecord(name ? { fullName: name, phone: scoped.e164, whatsapp: scoped.whatsapp ? scoped.e164 : null } : undefined, ctx, {
+      allPhones: [scoped],
       localText: local,
     });
-    if (!rec || seen.has(rec.fingerprint)) continue;
+    if (!rec || seen.has(rec.fingerprint)) return;
     seen.add(rec.fingerprint);
     records.push(rec);
-  }
+  });
   return records;
-}
-
-function localContextFor(fullText: string, g: RawGuide): string | undefined {
-  const anchor = g.fullName?.split(/\s+/)[0];
-  if (!anchor || anchor.length < 2) return undefined;
-  const idx = fullText.toLowerCase().indexOf(anchor.toLowerCase());
-  if (idx === -1) return undefined;
-  return fullText.slice(Math.max(0, idx - 300), idx + 1500);
 }
 
 function phonesNear(fullText: string, phones: PhoneHit[], g: RawGuide): PhoneHit[] {

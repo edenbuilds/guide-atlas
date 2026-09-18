@@ -33,11 +33,21 @@ export function GuidesTable({ rows, total, filters }: Props) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [detail, setDetail] = React.useState<GuideView | null>(null);
 
-  // Selection is page-scoped; reset when the row set changes.
-  React.useEffect(() => setSelected(new Set()), [rows]);
+  // Selection is page-scoped: it is keyed by the identity of the current row set so a new page,
+  // sort or filter starts with an empty selection without an effect.
+  const rowsKey = React.useMemo(() => rows.map((r) => r.id).join("|"), [rows]);
+  const [selection, setSelection] = React.useState<{ key: string; ids: Set<string> }>({ key: rowsKey, ids: new Set() });
+  const selected = selection.key === rowsKey ? selection.ids : new Set<string>();
+  const setSelected = React.useCallback(
+    (updater: Set<string> | ((prev: Set<string>) => Set<string>)) =>
+      setSelection((prev) => {
+        const base = prev.key === rowsKey ? prev.ids : new Set<string>();
+        return { key: rowsKey, ids: typeof updater === "function" ? updater(base) : updater };
+      }),
+    [rowsKey],
+  );
 
   const allSelected = rows.length > 0 && rows.every((r) => selected.has(r.id));
   const someSelected = rows.some((r) => selected.has(r.id));
@@ -81,9 +91,6 @@ export function GuidesTable({ rows, total, filters }: Props) {
   const from = total === 0 ? 0 : (filters.page - 1) * filters.pageSize + 1;
   const to = Math.min(total, filters.page * filters.pageSize);
 
-  const SortIcon = ({ k }: { k: GuideFilters["sort"] }) =>
-    filters.sort !== k ? <ArrowUpDown className="size-3 opacity-40" /> : filters.dir === "asc" ? <ArrowUp className="size-3" /> : <ArrowDown className="size-3" />;
-
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -116,7 +123,7 @@ export function GuidesTable({ rows, total, filters }: Props) {
               {SORTABLE.map((c) => (
                 <TableHead key={c.key} className={c.className}>
                   <button type="button" onClick={() => setSort(c.key)} className="inline-flex items-center gap-1 hover:text-foreground">
-                    {c.label} <SortIcon k={c.key} />
+                    {c.label} <SortIcon k={c.key} sort={filters.sort} dir={filters.dir} />
                   </button>
                 </TableHead>
               ))}
@@ -127,7 +134,7 @@ export function GuidesTable({ rows, total, filters }: Props) {
               <TableHead>Languages</TableHead>
               <TableHead className="text-right">
                 <button type="button" onClick={() => setSort("confidence")} className="inline-flex items-center gap-1 hover:text-foreground">
-                  Score <SortIcon k="confidence" />
+                  Score <SortIcon k="confidence" sort={filters.sort} dir={filters.dir} />
                 </button>
               </TableHead>
               <TableHead className="w-10" />
@@ -258,6 +265,11 @@ export function GuidesTable({ rows, total, filters }: Props) {
       <GuideDetailSheet guide={detail} onOpenChange={(open) => !open && setDetail(null)} />
     </div>
   );
+}
+
+function SortIcon({ k, sort, dir }: { k: GuideFilters["sort"]; sort: GuideFilters["sort"]; dir: GuideFilters["dir"] }) {
+  if (sort !== k) return <ArrowUpDown className="size-3 opacity-40" />;
+  return dir === "asc" ? <ArrowUp className="size-3" /> : <ArrowDown className="size-3" />;
 }
 
 function PageLink({ page, disabled, label }: { page: number; current: number; disabled: boolean; label: string }) {

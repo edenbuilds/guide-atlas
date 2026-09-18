@@ -28,7 +28,16 @@ export interface KeywordRule<T extends string> {
   pattern: RegExp;
   /** matches that must be absent within the same ~40 char window for the rule to fire */
   exclude?: RegExp;
+  /** require a client/guest context word (see CLIENT_CONTEXT) in the window; used for labels that are also common place names */
+  requiresContext?: boolean;
 }
+
+/** Words that indicate a nationality mention is about clients rather than a place, currency or cuisine. */
+export const CLIENT_CONTEXT =
+  /client|guest|tourist|travel+er|visitor|group|customer|famil|couple|honeymoon|passenger|people from|worked with|guided|hosted|welcom|served|specialis|specializ|experience with|from (all over )?(?!the page)|gäste|kunden|touristen|reisende|besucher|gruppen|familien|touristes|voyageurs|visiteurs|groupes|familles|clienti|turisti|ospiti|visitatori|gruppi|famiglie|clientes|turistas|visitantes|huéspedes|grupos|familias|gasten|klanten|toeristen|groepen|gezinnen|klienci|turyści|goście|grupy|klienti|turisté|hosté|skupiny|vendégek|turisták|csoportok|clienți|turiști|grupuri|клиент|турист|гост|групп|семь|πελάτ|τουρίστ|επισκέπτ|ομάδ|müşteri|turist|misafir|grup|gosti|klijenti|turisti|grupe|kunder|gäster|turister|grupper|asiakkaat|turistit|ryhmät|お客様|お客さま|観光客|旅行者|ゲスト|の方|団体|グループ|ご家族|고객|관광객|여행자|손님|단체|가족|ลูกค้า|นักท่องเที่ยว|khách|du khách|tamu|wisatawan|عملاء|سياح|زوار/iu;
+
+/** Currency pickers, cuisine and geography boilerplate that produce false nationality hits. */
+const NATIONALITY_NOISE = /dollar|pound|sterling|currency|währung|devise|valuta|moneda|\b(usd|gbp|aud|cad|sgd|myr|jpy|krw|eur|inr|cny|aed|sar)\b|restaurant|cuisine|food|kitchen|embassy|consulate|airline|airways|visa|passport|time zone|timezone|language school|university of/iu;
 
 // ---------------------------------------------------------------------------------------------
 // Client nationality experience
@@ -63,8 +72,12 @@ export const CLIENT_RULES: KeywordRule<ClientNationality>[] = [
       "อินเดีย", // th
       "ấn độ", // vi
       "هند", // ar
+      // Indian-market signals: languages, cities, diaspora terms
+      w("hindi"), w("gujarati"), w("punjabi"), w("marathi"), w("bengali"), w("tamil"), w("telugu"), w("malayalam"), w("kannada"),
+      ww("desi"), ww("bollywood"), ww("namaste"), ww("jain (food|meals?|diet)"), ww("indian veg\\p{L}*"),
+      ww("mumbai"), ww("bombay"), ww("delhi"), ww("bangalore"), ww("bengaluru"), ww("chennai"), ww("kolkata"), ww("hyderabad"), ww("ahmedabad"), ww("pune"), ww("gujarat"), ww("kerala"), ww("punjab"),
     ]),
-    exclude: /indones|indiana|west ind|east ind|indian ocean|indian restaurant|indian food|cuisine|curry/iu,
+    exclude: new RegExp(`indones|indiana|west ind|east ind|indian ocean|indian (summer|wells|premier league|embassy)|curry|${NATIONALITY_NOISE.source}`, "iu"),
   },
   {
     label: "American",
@@ -88,7 +101,8 @@ export const CLIENT_RULES: KeywordRule<ClientNationality>[] = [
       "hoa kỳ", "mỹ", // vi
       "أمريك", // ar
     ]),
-    exclude: /south\s*american|latin\s*american|sudamerican|sud-am[eé]ricain|s[uü]damerikan|latino?american|central american|native american/iu,
+    exclude: new RegExp(`south\\s*american|latin\\s*american|sudamerican|sud-am[eé]ricain|s[uü]damerikan|latino?american|central american|native american|american express|${NATIONALITY_NOISE.source}`, "iu"),
+    requiresContext: true,
   },
   {
     label: "Chinese",
@@ -117,7 +131,7 @@ export const CLIENT_RULES: KeywordRule<ClientNationality>[] = [
       "trung quốc", // vi
       "صين", // ar
     ]),
-    exclude: /chinese restaurant|chinese food|chinatown|china town|porcelain/iu,
+    exclude: new RegExp(`chinatown|china town|porcelain|${NATIONALITY_NOISE.source}`, "iu"),
   },
   {
     label: "British",
@@ -127,6 +141,8 @@ export const CLIENT_RULES: KeywordRule<ClientNationality>[] = [
       w("britsk"), ww("brit"), w("britanic"), "британ", "βρεταν", w("ingiliz"), w("britansk"), w("brittil"),
       "イギリス", "英国", "영국", "อังกฤษ", "anh quốc",
     ]),
+    exclude: NATIONALITY_NOISE,
+    requiresContext: true,
   },
   {
     label: "Australian",
@@ -135,6 +151,8 @@ export const CLIENT_RULES: KeywordRule<ClientNationality>[] = [
       w("australijsk"), w("austrálsk"), w("ausztrál"), "австралий", "αυστραλ", w("avustralya"), w("australsk"),
       "オーストラリア", "豪州", "호주", "ออสเตรเลีย",
     ]),
+    exclude: NATIONALITY_NOISE,
+    requiresContext: true,
   },
   {
     label: "Canadian",
@@ -143,14 +161,20 @@ export const CLIENT_RULES: KeywordRule<ClientNationality>[] = [
       w("canadense"), w("canadees"), w("kanadyjsk"), w("kanadsk"), w("kanadai"), "канад", "καναδ", w("kanadal"),
       "カナダ", "캐나다",
     ]),
+    exclude: NATIONALITY_NOISE,
+    requiresContext: true,
   },
   {
     label: "Singaporean",
     pattern: rx([w("singapor"), w("singapur"), w("szingapúr"), "сингапур", "シンガポール", "싱가포르", "新加坡"]),
+    exclude: NATIONALITY_NOISE,
+    requiresContext: true,
   },
   {
     label: "Malaysian",
     pattern: rx([w("malaysia"), w("malaisie"), w("malesi"), w("malasia"), w("malezj"), "малайз", "マレーシア", "말레이시아", "马来西亚"]),
+    exclude: NATIONALITY_NOISE,
+    requiresContext: true,
   },
   {
     label: "Middle Eastern",
@@ -160,6 +184,8 @@ export const CLIENT_RULES: KeywordRule<ClientNationality>[] = [
       w("árabe"), w("arabo"), "midden-oosten", "bliski wschód", "ближний восток", "μέση ανατολή", "orta doğu",
       "中東", "アラブ", "중동", "아랍", "الخليج", "عرب",
     ]),
+    exclude: NATIONALITY_NOISE,
+    requiresContext: true,
   },
   {
     label: "Japanese",
@@ -168,7 +194,8 @@ export const CLIENT_RULES: KeywordRule<ClientNationality>[] = [
       w("japans"), w("japońsk"), w("japonsk"), w("japán"), "япон", "ιαπων", ww("japon"), w("japansk"), w("japanilai"),
       "日本人", "日本の", "日本から", "日本", "일본", "ญี่ปุ่น", "nhật bản",
     ]),
-    exclude: /japanese (food|cuisine|restaurant|garden|language)|in japan(?!ese)|japan tour|japan guide|guide in japan/iu,
+    exclude: new RegExp(`${(/japanese (food|cuisine|restaurant|garden|language)|in japan(?!ese)|japan tour|japan guide|guide in japan/iu).source}|${NATIONALITY_NOISE.source}`, "iu"),
+    requiresContext: true,
   },
   {
     label: "Korean",
@@ -177,7 +204,8 @@ export const CLIENT_RULES: KeywordRule<ClientNationality>[] = [
       w("koreańsk"), w("korejsk"), w("koreai"), "корей", "κορεατ", w("kore"), w("koreansk"), w("korealai"),
       "韓国", "韓國", "한국인", "한국", "เกาหลี", "hàn quốc",
     ]),
-    exclude: /korean (food|cuisine|restaurant|bbq|language)|in korea(?!n)|korea tour|guide in korea/iu,
+    exclude: new RegExp(`${(/korean (food|cuisine|restaurant|bbq|language)|in korea(?!n)|korea tour|guide in korea/iu).source}|${NATIONALITY_NOISE.source}`, "iu"),
+    requiresContext: true,
   },
   {
     label: "European",
@@ -186,6 +214,8 @@ export const CLIENT_RULES: KeywordRule<ClientNationality>[] = [
       w("evropsk"), w("európai"), "европей", "ευρωπα", w("avrupalı"), w("europeisk"), w("eurooppalai"),
       "ヨーロッパ", "欧州", "유럽",
     ]),
+    exclude: NATIONALITY_NOISE,
+    requiresContext: true,
   },
   {
     label: "International",
@@ -197,6 +227,8 @@ export const CLIENT_RULES: KeywordRule<ClientNationality>[] = [
       "iz cijelog svijeta", "från hela världen", "ympäri maailmaa", "世界中", "海外から", "外国人", "訪日", "インバウンド",
       "전 세계", "외국인", "국제",
     ]),
+    exclude: NATIONALITY_NOISE,
+    requiresContext: true,
   },
 ];
 
@@ -208,14 +240,15 @@ export const VEHICLE_RULES: KeywordRule<VehicleType>[] = [
   {
     label: "Coach",
     pattern: rx([
-      ww("coach(es)?"), ww("motor ?coach"), ww("tour bus"), ww("full[- ]size bus"), ww("big bus"), ww("large bus"),
+      ww("(tour|luxury|private|own|our|my|executive|charter|air-?conditioned|\\d+[- ]?seater?) coach(es)?"), ww("coach (tours?|trips?|hire|charter|driver|company|travel|holidays?|excursions?)"),
+      ww("motor ?coach(es)?"), ww("by coach"), ww("tour bus"), ww("full[- ]size bus"), ww("big bus"), ww("large bus"),
       ww("reisebus(se)?"), ww("autocar"), ww("autobus"), ww("pullman"), ww("autocarro"), ww("touringcar"),
       ww("autokar"), ww("zájezdový autobus"), ww("autóbusz"), ww("autocar"), "автобус", "λεωφορείο", ww("otobüs"),
       ww("turistički autobus"), ww("turistbuss"), ww("linja-auto"), "大型バス", "観光バス", "大型버스", "대형버스", "관광버스",
       // seat counts >= 25 imply a coach
       "(?:2[5-9]|[3-6]\\d)[ -]?(?:seater|seats|pax|passengers|places|posti|plazas|sitzer|plätze|personen|人乗り|인승)",
     ]),
-    exclude: /bus stop|by bus|public bus|local bus|bus station|bus ticket|no bus|shuttle bus|hop[- ]on|city bus|autobus (publico|urbano|de línea)|mit dem bus|en bus|in autobus|del autobús|coach(ing)? (session|program)|life coach|business coach/iu,
+    exclude: /bus stop|by bus|public bus|local bus|bus station|bus ticket|no bus|shuttle bus|hop[- ]on|city bus|autobus (publico|urbano|de línea)|mit dem bus|en bus|in autobus|del autobús|coach(ing)? (session|program)|life coach|business coach|city coach|personal coach|your coach|coach (you|me|them|us)\b/iu,
   },
   {
     label: "Minibus",
@@ -407,8 +440,12 @@ export const COMPANY_PATTERN = rx([
   "unsere (fahrer|guides|flotte|mitarbeiter)", "notre (équipe|flotte)", "nos (chauffeurs|guides)", "la nostra (flotta|squadra)", "i nostri (autisti|guide)",
   "nuestra flota", "nuestros (conductores|guías)", "nossa (frota|equipe)", "ons team", "onze (chauffeurs|gidsen)", "nasza flota", "naši (řidiči|průvodci)",
   "наш(а|и) (команда|водители|гиды|автопарк)", "η ομάδα μας", "ekibimiz", "filomuz", "弊社", "当社", "私たちのチーム", "スタッフ", "저희 (팀|회사)",
-  "\\b(ltd|llc|gmbh|s\\.?r\\.?l\\.?|s\\.?l\\.?|sas|sarl|bv|ab|as|oy|sp\\. z o\\.o\\.|kft|srl|d\\.o\\.o\\.|株式会社|有限会社|\\(주\\)|주식회사)\\b",
+  "株式会社", "有限会社", "\\(주\\)", "주식회사",
 ]);
+
+/** Legal-form suffixes, case-sensitive so that English words like "as"/"ab" never match. */
+export const LEGAL_SUFFIX_PATTERN =
+  /(?<=\p{Lu}[\p{L}&.\- ]{1,60}\s)(Ltd\.?|LLC|Inc\.?|GmbH|UG|AG|S\.?r\.?l\.?|S\.?L\.?|S\.?A\.?|SAS|SARL|B\.?V\.?|N\.?V\.?|AB|AS|ApS|Oy|Sp\. z o\.o\.|Kft\.?|Zrt\.?|s\.r\.o\.|d\.o\.o\.|OÜ|SIA|UAB|EOOD|OOD|SRL|Sh\.p\.k\.|LTD|PLC)(?![\p{L}])/u;
 
 export const LICENSED_PATTERN = rx([
   ww("licen[sc]ed"), ww("licen[sc]e"), ww("certified"), ww("official guide"), ww("lizenziert\\p{L}*"), ww("staatlich geprüft\\p{L}*"),

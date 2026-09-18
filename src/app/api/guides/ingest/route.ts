@@ -134,14 +134,18 @@ export async function POST(req: NextRequest) {
           return prisma.tourGuide.upsert({ where: { fingerprint: g.fingerprint }, create: data, update: data });
         }),
       );
-      for (const g of chunk) existing.has(g.fingerprint) ? updated++ : created++;
+      for (const g of chunk) {
+        if (existing.has(g.fingerprint)) updated++;
+        else created++;
+      }
     } catch (error) {
       // Fall back to row-by-row so one bad record cannot sink the chunk.
       for (const [j, g] of chunk.entries()) {
         try {
           const data = mergeInto(existing.get(g.fingerprint), g);
           await prisma.tourGuide.upsert({ where: { fingerprint: g.fingerprint }, create: data, update: data });
-          existing.has(g.fingerprint) ? updated++ : created++;
+          if (existing.has(g.fingerprint)) updated++;
+          else created++;
         } catch (rowError) {
           errors.push({ index: i + j, error: rowError instanceof Error ? rowError.message : String(rowError ?? error) });
         }

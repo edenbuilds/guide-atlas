@@ -246,7 +246,7 @@ export function targetsFromUrls(urls: string[], countryCode?: CountryCode, opts:
     countryCode: countryCode ?? ("DE" as CountryCode),
     url,
     followProfiles: true,
-    extractListing: true,
+    extractListing: false, // adaptive: pipeline extracts the page itself when it has no profile links
     paging: { maxPages: 10 },
     ...opts,
   }));

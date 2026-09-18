@@ -191,7 +191,18 @@ async function runDirectoryTarget(ctx: PipelineContext, target: ScrapeTarget, co
     const markdown = listing.markdown ?? "";
     const links = listing.links ?? [];
 
-    if (target.extractListing) {
+    let newProfiles: string[] = [];
+    let found: string[] = [];
+    if (target.followProfiles) {
+      found = discoverProfileLinks(currentUrl, links, markdown, target.discovery);
+      newProfiles = found.filter((u) => markVisited(ctx, u));
+      log.info(`${target.id}: page ${n} → ${found.length} profile links (${newProfiles.length} new)`);
+    }
+
+    // Listing pages are extracted directly when configured, or adaptively when the page has no
+    // profile links to follow (forum threads, classifieds, single-page directories).
+    const extractHere = target.extractListing || (target.followProfiles && found.length === 0);
+    if (extractHere) {
       try {
         const records = await extractPage(ctx, currentUrl, target, country, target.sourceType, listing);
         await emit(ctx, target, records);
@@ -201,11 +212,7 @@ async function runDirectoryTarget(ctx: PipelineContext, target: ScrapeTarget, co
       }
     }
 
-    let newProfiles: string[] = [];
     if (target.followProfiles) {
-      const found = discoverProfileLinks(currentUrl, links, markdown, target.discovery);
-      newProfiles = found.filter((u) => markVisited(ctx, u));
-      log.info(`${target.id}: page ${n} → ${found.length} profile links (${newProfiles.length} new)`);
 
       const remaining = ctx.limits.maxProfilesPerTarget - profilesScheduled;
       const batch = newProfiles.slice(0, Math.max(0, remaining));

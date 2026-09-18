@@ -1,0 +1,96 @@
+// Prisma schema for Guide Atlas.
+//
+// Provider is SQLite for local prototyping. To move to PostgreSQL:
+//   1. change `provider = "sqlite"` to `provider = "postgresql"`
+//   2. set DATABASE_URL to a postgres connection string
+//   3. run `npx prisma migrate dev --name init-postgres`
+// All column types below are chosen to be valid on both providers
+// (no enums, no scalar lists — list fields are JSON-encoded strings).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model TourGuide {
+  id String @id @default(cuid())
+
+  // Identity
+  fullName    String
+  companyName String?
+
+  // Direct contact channels (E.164 for phone/whatsapp when parseable)
+  email             String?
+  phone             String?
+  whatsapp          String?
+  whatsappConfirmed Boolean @default(false) // true only when the page explicitly labels the number as WhatsApp / wa.me link
+  website           String?
+  contactPageUrl    String?
+
+  // Location
+  country     String
+  countryCode String? // ISO 3166-1 alpha-2
+  city        String?
+  region      String? // sub-national region / prefecture / province
+
+  // Vehicle
+  vehicleType     String? // Sedan | SUV | Minivan | Minibus | Coach | Motorcycle | None | Unknown
+  vehicleDetails  String? // free text e.g. "Mercedes V-Class, 7 seats"
+  vehicleCapacity Int?
+
+  // Capabilities (JSON-encoded string arrays for SQLite/Postgres portability)
+  services          String  @default("[]") // ["Driver","Guide","Driver-Guide","Tour Manager","Transfer","Interpreter"]
+  languages         String  @default("[]") // ["English","Japanese"]
+  clientExperience  String  @default("[]") // ["Indian","American","Chinese"]
+  isIndependent     Boolean @default(true)
+  worksWithCouples  Boolean?
+  smallGroupCapable Boolean?
+  isTourManager     Boolean?
+  licensed          Boolean?
+  yearsExperience   Int?
+  bio               String?
+
+  // Provenance
+  sourceUrl    String
+  sourceDomain String
+  sourceType   String? // directory | marketplace | forum | classified | personal-site | search
+  confidence   Float   @default(0.5) // 0..1 heuristic quality score
+  evidence     String? // JSON: snippets proving vehicle / client-experience / whatsapp claims
+  rawJson      String? // original extractor output for auditing
+
+  // Dedupe key: sha1 of (whatsapp|phone|email|name+country)
+  fingerprint String @unique
+
+  scrapedAt DateTime @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([country])
+  @@index([countryCode])
+  @@index([vehicleType])
+  @@index([sourceDomain])
+  @@index([whatsappConfirmed])
+  @@index([scrapedAt])
+}
+
+model ScrapeRun {
+  id             String    @id @default(cuid())
+  region         String?
+  targetUrls     String // JSON array
+  mode           String // llm | regex
+  status         String    @default("running") // running | completed | failed
+  pagesScraped   Int       @default(0)
+  guidesFound    Int       @default(0)
+  guidesUpserted Int       @default(0)
+  creditsUsed    Int       @default(0)
+  error          String?
+  startedAt      DateTime  @default(now())
+  finishedAt     DateTime?
+
+  @@index([status])
+  @@index([startedAt])
+}

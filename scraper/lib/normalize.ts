@@ -405,9 +405,9 @@ export function classifyVehicle(
     else if (type === null || type === "Unknown") type = "Sedan";
   }
 
+  // Details come from the model only when they are grounded in the page; raw snippets live in `evidence`.
   let details = llm?.vehicleDetails?.trim() || null;
   if (details && !fuzzyIncludes(text, details) && !/\d/.test(details)) details = null;
-  if (!details && evidence[0] && type && type !== "Unknown" && type !== "None") details = evidence[0].slice(0, 200);
 
   return { type, capacity, details, evidence };
 }
@@ -673,7 +673,8 @@ export function buildRecord(llm: RawGuide | undefined, ctx: NormalizeContext, op
   const companyLike = legalEntity || (COMPANY_PATTERN.test(text) && !INDEPENDENT_PATTERN.test(text));
   const isIndependent = legalEntity ? false : typeof llm?.isIndependent === "boolean" ? llm.isIndependent : !companyLike;
 
-  const languages = unique((llm?.languages ?? []).map((l) => l.trim()).filter((l) => l.length >= 2 && l.length <= 40 && /^[\p{L}\s()-]+$/u.test(l)));
+  // More than 6 "spoken" languages almost always means the model read a site language switcher.
+  const languages = unique((llm?.languages ?? []).map((l) => l.trim()).filter((l) => l.length >= 2 && l.length <= 40 && /^[\p{L}\s()-]+$/u.test(l))).slice(0, 6);
 
   const bio = llm?.bio?.trim() ? llm.bio.trim().slice(0, 4000) : null;
 

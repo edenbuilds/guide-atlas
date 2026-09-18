@@ -54,8 +54,8 @@ function csvCell(value: unknown): string {
   else if (value instanceof Date) s = value.toISOString();
   else if (typeof value === "boolean") s = value ? "yes" : "no";
   else s = String(value);
-  // Neutralise spreadsheet formula injection.
-  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
+  // Neutralise spreadsheet formula injection, but leave E.164 phone numbers (+4179…) untouched.
+  if (/^[=+\-@\t\r]/.test(s) && !/^\+\d{6,15}$/.test(s)) s = `'${s}`;
   if (/[",\r\n]/.test(s)) s = `"${s.replace(/"/g, '""')}"`;
   return s;
 }

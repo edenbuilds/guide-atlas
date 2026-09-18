@@ -315,7 +315,7 @@ async function liveExtraction(url: string, countryCode: string): Promise<GuideRe
   });
   process.stdout.write(`INFO  normalised ${records.length} record(s), ${fc.creditsUsed} credits used\n`);
   for (const r of records)
-    process.stdout.write(`      - ${r.fullName} | ${r.country} | wa=${r.whatsapp ?? "-"}${r.whatsappConfirmed ? "✓" : ""} tel=${r.phone ?? "-"} | ${r.vehicleType ?? "-"} | ${r.services.join("/")} | ${r.clientExperience.join(",") || "-"} | conf ${r.confidence}\n`);
+    process.stdout.write(`      - ${r.fullName} | ${r.country} | wa=${r.whatsapp ?? "-"}${r.whatsappConfirmed ? "✓" : ""} tel=${r.phone ?? "-"} | ${r.vehicleType ?? "-"} | ${(r.services ?? []).join("/")} | ${(r.clientExperience ?? []).join(",") || "-"} | conf ${r.confidence}\n`);
   return records;
 }
 

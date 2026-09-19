@@ -1,18 +1,16 @@
 // Prisma schema for Guide Atlas.
 //
-// Provider is SQLite for local prototyping. To move to PostgreSQL:
-//   1. change `provider = "sqlite"` to `provider = "postgresql"`
-//   2. set DATABASE_URL to a postgres connection string
-//   3. run `npx prisma migrate dev --name init-postgres`
-// All column types below are chosen to be valid on both providers
-// (no enums, no scalar lists — list fields are JSON-encoded strings).
+// Provider is PostgreSQL (Prisma Postgres / Neon / any managed Postgres). The schema was
+// prototyped on SQLite and all column types are valid on both providers (no enums, no scalar
+// lists — list fields are JSON-encoded strings), so a local SQLite fallback only needs
+// `provider = "sqlite"` plus a fresh `prisma migrate dev`.
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 

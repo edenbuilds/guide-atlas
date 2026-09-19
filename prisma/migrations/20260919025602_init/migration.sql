@@ -1,6 +1,6 @@
 -- CreateTable
 CREATE TABLE "TourGuide" (
-    "id" TEXT NOT NULL PRIMARY KEY,
+    "id" TEXT NOT NULL,
     "fullName" TEXT NOT NULL,
     "companyName" TEXT,
     "email" TEXT,
@@ -29,18 +29,20 @@ CREATE TABLE "TourGuide" (
     "sourceUrl" TEXT NOT NULL,
     "sourceDomain" TEXT NOT NULL,
     "sourceType" TEXT,
-    "confidence" REAL NOT NULL DEFAULT 0.5,
+    "confidence" DOUBLE PRECISION NOT NULL DEFAULT 0.5,
     "evidence" TEXT,
     "rawJson" TEXT,
     "fingerprint" TEXT NOT NULL,
-    "scrapedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL
+    "scrapedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "TourGuide_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "ScrapeRun" (
-    "id" TEXT NOT NULL PRIMARY KEY,
+    "id" TEXT NOT NULL,
     "region" TEXT,
     "targetUrls" TEXT NOT NULL,
     "mode" TEXT NOT NULL,
@@ -50,8 +52,10 @@ CREATE TABLE "ScrapeRun" (
     "guidesUpserted" INTEGER NOT NULL DEFAULT 0,
     "creditsUsed" INTEGER NOT NULL DEFAULT 0,
     "error" TEXT,
-    "startedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "finishedAt" DATETIME
+    "startedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "finishedAt" TIMESTAMP(3),
+
+    CONSTRAINT "ScrapeRun_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateIndex

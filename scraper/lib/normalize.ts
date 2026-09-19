@@ -645,7 +645,9 @@ function resolveCountry(llm: RawGuide | undefined, ctx: NormalizeContext, phones
   // record when a phone number on the page proves a presence inside a target market.
   if (llm?.country?.trim()) return countryFromPhones(phones);
 
-  return ctx.countryHint ?? countryFromPhones(phones) ?? detectCountryInText(text);
+  // No location from the model: the operator's own phone prefix says where they are based more
+  // reliably than which country's search surfaced the page (a Croatian guide found via "Italy").
+  return countryFromPhones(phones) ?? ctx.countryHint ?? detectCountryInText(text);
 }
 
 /** Build one record from an LLM guide object (or `undefined` in regex mode) plus page text. */

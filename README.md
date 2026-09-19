@@ -6,7 +6,8 @@ End-to-end scraping service and outreach directory for **independent driver-guid
 | --- | --- |
 | Scraper | Node.js / TypeScript CLI (`scraper/`) on the **Firecrawl v2 API**, with an **Apify** fallback engine for bot-walled domains |
 | API | Next.js 16 App Router route handlers (`src/app/api/guides/*`) |
-| DB | **Prisma 6** — SQLite for prototyping, provider-portable schema for PostgreSQL |
+| DB | **Prisma 6** on **PostgreSQL** (prototyped on SQLite; schema is provider-portable) |
+| Hosting | **Vercel** — production deploy on every push to `main`, migrations run in the build step |
 | UI | Next.js + Tailwind CSS 4 + shadcn/ui data-table dashboard |
 
 ---
@@ -16,8 +17,9 @@ End-to-end scraping service and outreach directory for **independent driver-guid
 ```bash
 git clone https://github.com/edenbuilds/guide-atlas && cd guide-atlas
 npm install                      # runs `prisma generate` via postinstall
-cp .env.example .env             # add FIRECRAWL_API_KEY
-npx prisma migrate dev           # creates prisma/dev.db
+cp .env.example .env             # add FIRECRAWL_API_KEY and a Postgres DATABASE_URL
+npx create-db@latest create --env .env   # optional: instant throwaway Prisma Postgres, no account needed
+npm run db:deploy                # applies prisma/migrations
 npm run dev                      # dashboard + ingest API on http://localhost:3000
 ```
 
@@ -104,9 +106,9 @@ npm run scrape:workers -- --per-country --country IT,ES,FR --mode regex --print
 
 ## Phase 2 — Database & API
 
-`prisma/schema.prisma` defines `TourGuide` (identity, contact channels, location, vehicle, capabilities, provenance, `fingerprint @unique`) and `ScrapeRun`. List fields are JSON-encoded strings so the schema works unchanged on SQLite and PostgreSQL.
+`prisma/schema.prisma` defines `TourGuide` (identity, contact channels, location, vehicle, capabilities, provenance, `fingerprint @unique`) and `ScrapeRun`. List fields are JSON-encoded strings and there are no enums or scalar lists, so the schema is identical on PostgreSQL (production) and SQLite (the original prototype).
 
-**Switching to PostgreSQL**: change `provider = "postgresql"` in `prisma/schema.prisma`, point `DATABASE_URL` at Postgres, run `npx prisma migrate dev --name init-postgres`.
+`npm run build` runs `prisma generate && prisma migrate deploy && next build`, so a deploy always applies pending migrations before the new code goes live.
 
 | Route | Purpose |
 | --- | --- |
@@ -152,6 +154,22 @@ Additionally a fresh-context verifier subagent audited the Firecrawl → Zod →
 ## Environment
 
 See [`.env.example`](.env.example): `DATABASE_URL`, `FIRECRAWL_API_KEY`, optional `FIRECRAWL_MAX_CONCURRENCY`, `FIRECRAWL_RPM`, `APIFY_TOKEN`, `INGEST_API_URL`, `INGEST_API_KEY`, `SCRAPER_MODE`, `SCRAPER_MAX_CREDITS`.
+
+## Deploying to Vercel
+
+The Vercel project is linked to this repository; every push to `main` builds and deploys production.
+
+1. **Database** — any PostgreSQL URL works. Set `DATABASE_URL` in the Vercel project (Settings → Environment Variables). The build step applies migrations, so a brand-new database is ready after the first deploy. Vercel Marketplace Neon / Prisma Postgres integrations inject this variable automatically.
+2. **Protect the ingest API** — set `INGEST_API_KEY` to a random secret. `POST /api/guides/ingest` and `PATCH /api/guides/runs` then require `Authorization: Bearer <key>`; the dashboard and `GET` routes stay public.
+3. **Run the scraper from anywhere** against the deployment:
+
+```bash
+INGEST_API_URL=https://<your-deployment>.vercel.app/api/guides/ingest \
+INGEST_API_KEY=<key> \
+npm run scrape -- --region japan --kinds directory --max-credits 500
+```
+
+The scraper is not part of the Vercel build; it runs on a laptop, a cron box or parallel workers (`npm run scrape:workers`) and only talks to the deployment through the ingest API.
 
 ## Compliance note
 
